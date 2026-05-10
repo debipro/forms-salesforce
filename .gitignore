@@ -1,0 +1,25 @@
+node_modules/
+.DS_Store
+*.log
+
+# Nuxt
+.nuxt/
+.output/
+.data/
+dist/
+.cache/
+
+# Vercel
+.vercel/
+
+# Local env files (never commit secrets); keep .env.example tracked
+.env
+.env.*
+!.env.example
+
+# Salesforce CLI scratchpads (parity with debi-forms-vercel)
+.sfdx/
+token-response.json
+
+# TypeScript build artefacts
+*.tsbuildinfo

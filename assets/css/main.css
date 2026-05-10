@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/*
+  === Agent / customer checklist: branding ===
+  COLORS — edit `:root` (light) and `[data-theme="dark"]` in this file:
+    --primary, --primary-foreground, --ring   (brand)
+    --background, --foreground, --muted*, --border, --input  (surfaces)
+  FONTS — edit in this file:
+    --font-sans-stack  → main UI / body (Tailwind `font-sans`)
+    --font-mono-stack  → monospace (Tailwind `font-mono`)
+  To swap the loaded sans font, change the `<link rel="stylesheet">` for
+  Google Fonts in `nuxt.config.ts` and the first slot of `--font-sans-stack`
+  below so the new family is preferred over the system fallbacks.
+*/
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  --primary: #0092dd;
+  --primary-foreground: #ffffff;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: #0092dd;
+
+  --font-sans-stack: "Montserrat", ui-sans-serif, system-ui, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono-stack: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --primary: #0092dd;
+  --primary-foreground: #ffffff;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --border: #3f3f46;
+  --input: #52525b;
+  --ring: #0092dd;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-sans-stack);
+  --font-mono: var(--font-mono-stack);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans-stack);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+#__nuxt {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
