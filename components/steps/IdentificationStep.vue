@@ -98,9 +98,9 @@ defineExpose({ validate });
 </script>
 
 <template>
-  <section class="space-y-4">
+  <section class="space-y-3">
     <header v-if="title || description" class="space-y-1">
-      <h2 v-if="title" class="text-base font-semibold text-foreground">
+      <h2 v-if="title" class="text-sm font-semibold text-foreground">
         {{ title }}
       </h2>
       <p v-if="description" class="text-sm leading-relaxed text-muted-foreground">

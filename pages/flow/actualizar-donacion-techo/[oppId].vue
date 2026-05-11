@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Flow: "actualizar-donacion"
+ * Flow: "actualizar-donacion-techo"
  *
  * Self-service link the org emails to existing donors. Pre-loads the
  * Opportunity by `oppId` and lets them update the amount and/or save a
@@ -8,7 +8,12 @@
  * donor's perspective: leaving the payment area blank means "amount-only
  * update".
  *
- * URL: /flow/actualizar-donacion/<id-de-oportunidad>
+ * URL: /flow/actualizar-donacion-techo/<id-de-oportunidad>
+ *
+ * Naming convention: each flow's folder embeds the org name so the URL
+ * shows which Salesforce org is being written to. If you set up the
+ * boilerplate for a second org, copy this directory to
+ * `actualizar-donacion-<org>` and tweak the copy / SF field map.
  *
  * Compose-by-step shape:
  *   - 1 visible step (no wizard chrome)
@@ -26,6 +31,12 @@ import PaymentMethodStep from "~/components/steps/PaymentMethodStep.vue";
 import type { AmountData } from "~/components/steps/AmountStep.vue";
 import type { PaymentData } from "~/components/steps/PaymentMethodStep.vue";
 import { formatAmountEsAR } from "~/composables/formatters";
+
+definePageMeta({
+  flowTitle: "Actualizar donación — TECHO (autoservicio)",
+  flowDescription:
+    "Link que la org manda por mail a un donante para que cambie monto y/o método de pago. Requiere un Id de Oportunidad real de Salesforce en la URL.",
+});
 
 useHead({ title: "Actualizá tu donación" });
 
@@ -69,7 +80,9 @@ async function load() {
       error: boolean;
       message?: string;
       data?: FlowRecord;
-    }>(`/api/flow/actualizar-donacion/${oppId.value}`, { cache: "no-store" });
+    }>(`/api/flow/actualizar-donacion-techo/${oppId.value}`, {
+      cache: "no-store",
+    });
     if (json.error || !json.data) {
       throw new Error(
         json.message ||
@@ -123,7 +136,7 @@ async function handleSubmit() {
     if (payment.value.token) body.paymentMethodToken = payment.value.token;
 
     const json = await $fetch<{ error: boolean; message?: string }>(
-      `/api/flow/actualizar-donacion/${oppId.value}`,
+      `/api/flow/actualizar-donacion-techo/${oppId.value}`,
       { method: "POST", body },
     );
     if (json.error) {
@@ -149,7 +162,7 @@ onMounted(load);
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-2xl p-6">
+  <main class="mx-auto w-full max-w-xl px-4 py-5 sm:px-6">
     <p v-if="isLoading" class="text-sm text-muted-foreground">
       Cargando tu información…
     </p>
@@ -161,12 +174,12 @@ onMounted(load);
       }}
     </p>
 
-    <form v-else class="space-y-8" @submit.prevent="handleSubmit">
-      <header class="space-y-3">
-        <h1 class="text-xl font-semibold text-foreground">
+    <form v-else class="space-y-5" @submit.prevent="handleSubmit">
+      <header class="space-y-1.5">
+        <h1 class="text-lg font-semibold text-foreground sm:text-xl">
           Actualizá tu donación
         </h1>
-        <p class="text-base leading-relaxed text-foreground">
+        <p class="text-sm leading-relaxed text-foreground">
           Te invitamos a actualizar los datos de tu donación porque el cobro
           no se pudo completar. Por favor actualizalos para indicarnos
           dónde querés que cobremos.
@@ -216,7 +229,7 @@ onMounted(load);
       <button
         type="submit"
         :disabled="isSubmitting"
-        class="rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"
+        class="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"
       >
         {{ isSubmitting ? "Guardando..." : "Guardar cambios" }}
       </button>

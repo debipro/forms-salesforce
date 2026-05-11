@@ -41,6 +41,25 @@ export default defineNuxtConfig({
 
   css: ["~/assets/css/main.css"],
 
+  // Allow every page (and the API endpoints behind it) to be embedded in
+  // a third-party site as an `<iframe>`. Vercel doesn't set a default
+  // `X-Frame-Options`; what would otherwise block embedding is the CSP
+  // `frame-ancestors` directive, which here is set to `*` (any origin).
+  //
+  // If you want to restrict embedding to a specific list of sites,
+  // replace the `*` with a space-separated list of origins, e.g.
+  // `"frame-ancestors https://techo.org https://www.techo.org"`. Do not
+  // re-introduce `X-Frame-Options` — modern browsers ignore it when
+  // CSP `frame-ancestors` is present, and the two can conflict in
+  // confusing ways.
+  routeRules: {
+    "/**": {
+      headers: {
+        "Content-Security-Policy": "frame-ancestors *",
+      },
+    },
+  },
+
   vite: {
     plugins: [tailwindcss()],
   },

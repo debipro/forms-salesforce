@@ -70,7 +70,7 @@ const cells = computed<Cell[]>(() => {
 <template>
   <div
     v-if="total > 1"
-    class="flex w-full items-center py-6"
+    class="flex w-full items-center py-4"
     role="list"
     :aria-label="`Paso ${current} de ${total}`"
   >
@@ -79,7 +79,7 @@ const cells = computed<Cell[]>(() => {
         v-if="cell.kind === 'circle'"
         role="listitem"
         :class="[
-          'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-base font-semibold transition-colors',
+          'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors',
           cell.filled
             ? 'bg-primary text-primary-foreground'
             : 'border-2 border-border bg-background text-muted-foreground',
@@ -104,14 +104,14 @@ const cells = computed<Cell[]>(() => {
       <div
         v-else-if="cell.kind === 'check'"
         :class="[
-          'flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors',
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors',
           cell.filled
             ? 'bg-primary text-primary-foreground'
             : 'border-2 border-border bg-background text-muted-foreground',
         ]"
         aria-hidden="true"
       >
-        <svg viewBox="0 0 24 24" class="h-6 w-6 fill-current">
+        <svg viewBox="0 0 24 24" class="h-5 w-5 fill-current">
           <path
             d="M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20zm0-2a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm-2.3-8.7l1.3 1.29 3.3-3.3a1 1 0 0 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-2-2a1 1 0 0 1 1.4-1.42z"
           />

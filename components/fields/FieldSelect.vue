@@ -70,7 +70,7 @@ const hasPlaceholder = computed(
       :disabled="disabled"
       :aria-invalid="!!error || undefined"
       :aria-describedby="error ? `${inputId}-error` : undefined"
-      class="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25 disabled:opacity-60"
+      class="w-full rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25 disabled:opacity-60 sm:text-sm"
       @change="onChange"
     >
       <option v-if="hasPlaceholder" value="" disabled>{{ placeholder }}</option>

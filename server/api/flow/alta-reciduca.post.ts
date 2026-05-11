@@ -7,20 +7,24 @@ import {
 import type { DebiPaymentToken } from "~/composables/useDebiClient";
 
 /**
- * Server endpoint for the "reciduca" flow.
+ * Server endpoint for the "alta-reciduca" flow.
  *
- * Same two-stage shape as `/api/flow/alta.post.ts`. The differences with
- * Techo are:
+ * Same two-stage shape as `/api/flow/alta-techo.post.ts`. The differences
+ * with Techo are:
  *
  *   - The `phoneFixed` field is written onto the Contact under
- *     `Tel_fono_fijo__c` (a custom field that Reciduca has on Contact).
+ *     `Tel_fono_fijo__c`, a custom field that exists in Reciduca's
+ *     Salesforce org. **If you point this endpoint at a different org**
+ *     (e.g., you're using Techo's credentials to smoke-test the flow),
+ *     remove the `Tel_fono_fijo__c` line below or Salesforce returns
+ *     INVALID_FIELD and the response becomes a 422.
  *   - The DNI/CUIT goes onto the Opportunity under
  *     `TCPagos__N_mero_de_identificaci_n__c`, same as Techo.
  *
- * This file is intentionally close to `alta.post.ts` — it would be easy
- * to factor out a shared `handleAlta` helper, but keeping them as two
- * thin files makes "borrar Reciduca" a single-file operation and lets a
- * future flow tweak its server logic without affecting Techo.
+ * This file is intentionally close to `alta-techo.post.ts` — it would
+ * be easy to factor out a shared `handleAlta` helper, but keeping them
+ * as two thin files makes "borrar Reciduca" a single-file operation and
+ * lets a future flow tweak its server logic without affecting Techo.
  */
 
 type PersonalBody = {

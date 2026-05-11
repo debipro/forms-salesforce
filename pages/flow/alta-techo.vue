@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Flow: "alta" — Techo donor onboarding.
+ * Flow: "alta-techo" — Techo donor onboarding.
  *
- * URL: /flow/alta
+ * URL: /flow/alta-techo
  *
  * Mirrors the legacy 2-step `pages/form/techo.vue` from `debi-forms`:
  *   Step 1 — personal data (name, surname, DOB, email, phone, country, prov)
@@ -11,6 +11,12 @@
  * The anti-cart-abandonment pattern from debi-forms is preserved:
  * `onStepAdvance` POSTs the personal data after step 1 so the Contact is
  * created in Salesforce even if the donor never reaches the payment step.
+ *
+ * Naming convention: page filenames embed the org name (e.g.
+ * `alta-techo`, `alta-reciduca`) so the URL itself tells you which
+ * Salesforce org receives the data. Renaming this file renames the
+ * route — the matching server handler is in
+ * `server/api/flow/alta-techo.post.ts`.
  *
  * To customize: change colors in `assets/css/main.css`, edit copy here,
  * change the preset amounts, swap which steps you include. Adding a new
@@ -38,6 +44,16 @@ import AcceptanceStep, {
 import FieldSelect from "~/components/fields/FieldSelect.vue";
 import { useFlowState } from "~/composables/useFlowState";
 import { transformBirthDateToISO } from "~/composables/formatters";
+
+// `definePageMeta` is the canonical place to label a flow. The landing
+// page (`pages/index.vue`) reads these via `useRouter().getRoutes()` to
+// auto-render an onboarding list, so changing them here is enough —
+// no need to also edit a separate manifest.
+definePageMeta({
+  flowTitle: "Alta de donante — TECHO",
+  flowDescription:
+    "Wizard de 2 pasos: datos personales del donante y, después, monto + tarjeta o CBU + DNI + términos.",
+});
 
 useHead({ title: "Sumate a TECHO" });
 
@@ -87,7 +103,7 @@ async function onStepAdvance(stepIndex: number) {
     error: boolean;
     message?: string;
     data?: { contactId: string };
-  }>("/api/flow/alta", {
+  }>("/api/flow/alta-techo", {
     method: "POST",
     body: {
       stage: "personal",
@@ -126,7 +142,7 @@ async function onSubmit() {
   isSubmitting.value = true;
   try {
     const res = await $fetch<{ error: boolean; message?: string }>(
-      "/api/flow/alta",
+      "/api/flow/alta-techo",
       {
         method: "POST",
         body: {
@@ -157,20 +173,23 @@ async function onSubmit() {
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-2xl p-6">
-    <header class="mb-8 space-y-2">
-      <h1 class="text-2xl font-semibold text-foreground">
+  <main class="mx-auto w-full max-w-xl px-4 py-5 sm:px-6">
+    <header class="mb-5 space-y-1.5">
+      <h1 class="text-lg font-semibold text-foreground sm:text-xl">
         Sumate a TECHO
       </h1>
-      <p class="text-base leading-relaxed text-muted-foreground">
+      <p class="text-sm leading-relaxed text-muted-foreground">
         Tu donación nos ayuda a construir, en conjunto con familias de
         comunidades populares, mejores condiciones de vida en barrios
         afectados por la pobreza.
       </p>
     </header>
 
-    <div v-if="successMessage" class="rounded-xl bg-emerald-50 p-6 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
-      <p class="text-base font-semibold">{{ successMessage }}</p>
+    <div
+      v-if="successMessage"
+      class="rounded-xl bg-emerald-50 p-4 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
+    >
+      <p class="text-sm font-semibold">{{ successMessage }}</p>
       <p class="mt-1 text-sm">
         Recibirás un email con los detalles de tu donación.
       </p>
@@ -257,7 +276,7 @@ async function onSubmit() {
       </template>
     </MultiStepFlow>
 
-    <p v-if="errorMessage" class="mt-6 text-sm text-red-600" role="alert">
+    <p v-if="errorMessage" class="mt-4 text-sm text-red-600" role="alert">
       {{ errorMessage }}
     </p>
   </main>

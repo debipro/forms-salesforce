@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * Flow: "reciduca" — alta de donante con la forma de paso de Reciduca.
+ * Flow: "alta-reciduca" — alta de donante con la forma de paso de Reciduca.
  *
- * URL: /flow/reciduca
+ * URL: /flow/alta-reciduca
  *
  * Este flujo existe como **segundo ejemplo** dentro del repo (la entrega
- * para Techo se hace con `/flow/alta`). Demuestra dos cosas que la
+ * para Techo se hace con `/flow/alta-techo`). Demuestra dos cosas que la
  * arquitectura tiene que poder absorber sin reescribir steps:
  *
  *   1. Orden diferente de pasos: acá el monto va PRIMERO (paso 1), después
@@ -15,13 +15,18 @@
  *   2. Validador distinto para identificación: usa `CUIT_OR_DNI` (acepta
  *      7-11 dígitos), no solo DNI estricto.
  *
+ *   3. Selector de monto con `mode="select"` (dropdown), no botones:
+ *      la presentación original en debi-forms usaba un `<select>` con
+ *      labels descriptivos largos ("$76.600 mensual. Apadriná un/a
+ *      joven.") que no caben bien como botones.
+ *
  * Como el Contact recién se puede crear cuando hay nombre/email (paso 2),
  * el `onStepAdvance` dispara la creación en `stepIndex === 2`, no en 1.
  * Esto muestra que el hook anti-abandono es per-flow, no global.
  *
- * Si el cliente quiere quitar este flujo, basta con borrar este archivo y
- * `server/api/flow/reciduca.post.ts`. La ruta /flow/reciduca deja de existir
- * en el próximo deploy y nada más se rompe.
+ * Para quitar este flujo, borrá este archivo y
+ * `server/api/flow/alta-reciduca.post.ts`. La ruta /flow/alta-reciduca
+ * deja de existir en el próximo deploy.
  */
 import { computed, ref } from "vue";
 import MultiStepFlow from "~/components/flow/MultiStepFlow.vue";
@@ -40,6 +45,12 @@ import IdentificationStep, {
 import FieldText from "~/components/fields/FieldText.vue";
 import { useFlowState } from "~/composables/useFlowState";
 import { transformBirthDateToISO } from "~/composables/formatters";
+
+definePageMeta({
+  flowTitle: "Alta de donante — Reciduca (ejemplo)",
+  flowDescription:
+    "Wizard de 3 pasos con otro orden: primero el monto (dropdown), después los datos personales y al final el método de pago + identificación.",
+});
 
 useHead({ title: "Vos también sos protagonista - Reciduca" });
 
@@ -87,7 +98,7 @@ async function onStepAdvance(stepIndex: number) {
     error: boolean;
     message?: string;
     data?: { contactId: string };
-  }>("/api/flow/reciduca", {
+  }>("/api/flow/alta-reciduca", {
     method: "POST",
     body: {
       stage: "personal",
@@ -123,7 +134,7 @@ async function onSubmit() {
   isSubmitting.value = true;
   try {
     const res = await $fetch<{ error: boolean; message?: string }>(
-      "/api/flow/reciduca",
+      "/api/flow/alta-reciduca",
       {
         method: "POST",
         body: {
@@ -155,12 +166,12 @@ async function onSubmit() {
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-2xl p-6">
-    <header class="mb-8 space-y-2">
-      <h1 class="text-2xl font-semibold text-foreground">
+  <main class="mx-auto w-full max-w-xl px-4 py-5 sm:px-6">
+    <header class="mb-5 space-y-1.5">
+      <h1 class="text-lg font-semibold text-foreground sm:text-xl">
         Vos También Sos Protagonista
       </h1>
-      <p class="text-base leading-relaxed text-muted-foreground">
+      <p class="text-sm leading-relaxed text-muted-foreground">
         Apadriná a un/a joven con una beca mensual y ayudanos a transformar
         su futuro a través de la educación.
       </p>
@@ -168,9 +179,9 @@ async function onSubmit() {
 
     <div
       v-if="successMessage"
-      class="rounded-xl bg-emerald-50 p-6 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
+      class="rounded-xl bg-emerald-50 p-4 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
     >
-      <p class="text-base font-semibold">{{ successMessage }}</p>
+      <p class="text-sm font-semibold">{{ successMessage }}</p>
     </div>
 
     <MultiStepFlow
@@ -187,14 +198,16 @@ async function onSubmit() {
         <AmountStep
           v-model="state.amount"
           :step-index="1"
+          mode="select"
           title="Elegí tu aporte"
           description="Tu donación cubre parte de una beca anual."
           :presets="[
-            { value: 76600, label: '$76.600 — Apadriná un/a joven' },
-            { value: 38300, label: '$38.300 — Media beca' },
-            { value: 19150, label: '$19.150 — 25% de beca' },
-            { value: 7660, label: '$7.660 — 10% de beca' },
+            { value: 76600, label: '$76.600 mensual. Apadriná un/a joven.' },
+            { value: 38300, label: '$38.300 mensual. Doná media beca.' },
+            { value: 19150, label: '$19.150 mensual. Doná 25% de beca.' },
+            { value: 7660, label: '$7.660 mensual. Doná 10% de beca.' },
           ]"
+          custom-label="Quiero donar otro monto..."
           :frequencies="[
             { value: 'Mensual', label: 'Todos los meses' },
             { value: 'Única vez', label: 'Por única vez' },
@@ -243,7 +256,7 @@ async function onSubmit() {
       </template>
     </MultiStepFlow>
 
-    <p v-if="errorMessage" class="mt-6 text-sm text-red-600" role="alert">
+    <p v-if="errorMessage" class="mt-4 text-sm text-red-600" role="alert">
       {{ errorMessage }}
     </p>
   </main>

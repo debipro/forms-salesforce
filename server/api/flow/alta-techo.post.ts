@@ -7,7 +7,7 @@ import {
 import type { DebiPaymentToken } from "~/composables/useDebiClient";
 
 /**
- * Server endpoint for the "alta" flow.
+ * Server endpoint for the "alta-techo" flow.
  *
  * Accepts two stages:
  *

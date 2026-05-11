@@ -65,6 +65,35 @@ export class FlowRequestError extends Error {
 }
 
 /**
+ * Pulls the real Salesforce error message out of a jsforce `.create()` /
+ * `.update()` failure result. jsforce returns `{ success: false, errors:
+ * [{ statusCode, message, fields }] }` for API-level failures (e.g.,
+ * `INVALID_FIELD: No such column 'Foo__c' on entity Contact`). Without
+ * this helper, our generic `"No se pudo crear ..."` swallowed the
+ * statusCode and made debugging painful — especially when the org the
+ * env vars point to doesn't have all the custom fields the flow writes.
+ */
+function formatSaveFailure(
+  result: { success?: boolean; errors?: unknown },
+  fallback: string,
+): string {
+  const errors = Array.isArray(result.errors) ? result.errors : [];
+  const pieces = errors
+    .map((e: unknown) => {
+      if (typeof e === "string") return e;
+      if (e && typeof e === "object") {
+        const obj = e as { statusCode?: string; message?: string };
+        const code = obj.statusCode ? `${obj.statusCode}: ` : "";
+        if (obj.message) return `${code}${obj.message}`;
+      }
+      return "";
+    })
+    .filter(Boolean);
+  if (pieces.length === 0) return fallback;
+  return `${fallback} — ${pieces.join("; ")}`;
+}
+
+/**
  * Shape of the personal data captured by `PersonalDataStep`. Optional
  * fields stay as empty strings when the step renders without them.
  */
@@ -283,7 +312,12 @@ async function createPaymentMethod(
     .create(paymentMethodPayload(debiToken, contactId));
 
   if (!createResult.success || !createResult.id) {
-    throw new Error("No se pudo crear el método de pago en Salesforce");
+    throw new FlowRequestError(
+      formatSaveFailure(
+        createResult,
+        "No se pudo crear el método de pago en Salesforce",
+      ),
+    );
   }
   return createResult.id;
 }
@@ -307,7 +341,12 @@ async function updateOpportunityAndRecurring(
       });
 
   if (!oppUpdateResult.success) {
-    throw new Error("No se pudo actualizar la Oportunidad");
+    throw new FlowRequestError(
+      formatSaveFailure(
+        oppUpdateResult,
+        "No se pudo actualizar la Oportunidad",
+      ),
+    );
   }
 
   if (!record.recurringDonationId) return false;
@@ -324,7 +363,12 @@ async function updateOpportunityAndRecurring(
       });
 
   if (!recurringUpdateResult.success) {
-    throw new Error("No se pudo actualizar la donación recurrente");
+    throw new FlowRequestError(
+      formatSaveFailure(
+        recurringUpdateResult,
+        "No se pudo actualizar la donación recurrente",
+      ),
+    );
   }
   return true;
 }
@@ -469,7 +513,12 @@ export async function findOrCreateContact(input: {
 
     const result = await conn.sobject("Contact").create(payload);
     if (!result.success || !result.id) {
-      throw new Error("No se pudo crear el contacto en Salesforce");
+      throw new FlowRequestError(
+        formatSaveFailure(
+          result,
+          "No se pudo crear el contacto en Salesforce",
+        ),
+      );
     }
     return { contactId: result.id, created: true };
   });
@@ -533,7 +582,12 @@ export async function createDonationChain(input: {
         .sobject(map.recurring.sobject)
         .create(recurringPayload);
       if (!rdResult.success || !rdResult.id) {
-        throw new Error("No se pudo crear la donación recurrente.");
+        throw new FlowRequestError(
+          formatSaveFailure(
+            rdResult,
+            "No se pudo crear la donación recurrente",
+          ),
+        );
       }
       recurringDonationId = rdResult.id;
     }
@@ -562,7 +616,12 @@ export async function createDonationChain(input: {
 
     const oppResult = await conn.sobject("Opportunity").create(oppPayload);
     if (!oppResult.success || !oppResult.id) {
-      throw new Error("No se pudo crear la oportunidad en Salesforce.");
+      throw new FlowRequestError(
+        formatSaveFailure(
+          oppResult,
+          "No se pudo crear la oportunidad en Salesforce",
+        ),
+      );
     }
 
     return {

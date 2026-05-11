@@ -166,7 +166,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <StepsIndicator
       :total="steps"
       :current="currentStep"
@@ -174,31 +174,37 @@ defineExpose({
       :labels="stepLabels"
     />
 
-    <div ref="slotContainer" class="space-y-6">
+    <div ref="slotContainer" class="space-y-4">
       <!--
-        We use `v-if` (not `v-show`) so the previous step is fully
-        unmounted from the DOM when we advance. This guarantees the user
-        never sees old content stacked under the active step, and lets
-        `useFlowStep` deregister cleanly. Step data is preserved by
-        `useFlowState` in the parent flow page, so back-navigation
-        restores everything the donor typed.
+        Render ONLY the slot of the currently active step. Vue's slots are
+        lazy — children of inactive `#step-N` templates never get mounted,
+        so the previous step is guaranteed not to leak into the DOM. This
+        is simpler and more bullet-proof than iterating + v-if filtering.
+
+        The `:key` on the wrapper forces Vue to drop the previous step's
+        DOM subtree wholesale when the step changes, instead of trying to
+        reconcile it with the new slot content. Without the key, a stale
+        HMR snapshot can keep a previous step's children mounted under
+        the same wrapper. With the key, the swap is guaranteed.
+
+        Side benefit: `useFlowStep` automatically deregisters when the
+        active step unmounts and re-registers when the user goes back.
+        Step data is preserved by `useFlowState` in the parent flow page.
       -->
-      <template v-for="i in steps" :key="i">
-        <div v-if="currentStep === i" class="space-y-6">
-          <slot :name="`step-${i}`" />
-        </div>
-      </template>
+      <div :key="`flow-step-${currentStep}`" class="space-y-4">
+        <slot :name="`step-${currentStep}`" />
+      </div>
     </div>
 
     <p v-if="advanceError" class="text-sm text-red-600" role="alert">
       {{ advanceError }}
     </p>
 
-    <div class="flex items-center justify-between gap-3 pt-2">
+    <div class="flex items-center justify-between gap-3 pt-1">
       <button
         v-if="!isFirstStep"
         type="button"
-        class="rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-60"
+        class="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-60"
         :disabled="isAdvancing || isSubmitting"
         @click="goBack"
       >
@@ -208,7 +214,7 @@ defineExpose({
 
       <button
         type="button"
-        class="rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"
+        class="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"
         :disabled="isAdvancing || isSubmitting"
         @click="goNext"
       >

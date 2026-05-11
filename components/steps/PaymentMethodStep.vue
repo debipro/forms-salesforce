@@ -80,9 +80,9 @@ defineExpose({ validate });
 </script>
 
 <template>
-  <section class="space-y-4">
+  <section class="space-y-3">
     <header class="space-y-1">
-      <h2 class="text-base font-semibold text-foreground">
+      <h2 class="text-sm font-semibold text-foreground">
         <slot name="title">{{ title }}</slot>
       </h2>
       <p class="text-sm leading-relaxed text-muted-foreground">

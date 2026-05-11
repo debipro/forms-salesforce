@@ -59,9 +59,9 @@ defineExpose({ validate });
 </script>
 
 <template>
-  <section class="space-y-4">
+  <section class="space-y-3">
     <header v-if="title">
-      <h2 class="text-base font-semibold text-foreground">{{ title }}</h2>
+      <h2 class="text-sm font-semibold text-foreground">{{ title }}</h2>
     </header>
 
     <slot name="extra" />

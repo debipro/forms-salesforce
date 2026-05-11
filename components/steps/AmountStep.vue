@@ -1,8 +1,21 @@
 <script setup lang="ts">
 /**
- * Amount + frequency step. Renders a preset chip group plus an optional
- * custom-amount text input that appears when the user picks the "Otro
- * monto" preset (whose `value` is `null`).
+ * Amount + frequency step.
+ *
+ * Two visual modes for the preset picker, switchable via the `mode` prop:
+ *
+ *   - `"buttons"` (default) — renders a chip group, one button per preset.
+ *     Works best with short numeric labels ("$12.000", "$18.000", ...).
+ *
+ *   - `"select"` — renders a native `<select>` dropdown. Best when each
+ *     preset has a long descriptive label that wouldn't fit on a button
+ *     ("$76.600 mensual. Apadriná un/a joven."). This mirrors the
+ *     legacy debi-forms presentation for Reciduca and similar orgs.
+ *
+ * In both modes, a preset whose `value` is `null` is treated as the
+ * "Otro monto" escape hatch; picking it reveals the custom-amount text
+ * input. Pass `presets: []` to skip the picker entirely and only show
+ * the custom-amount input.
  *
  * The frequency selector is shown when more than one option is provided.
  * Pass `frequencies: [{ value: 'Mensual', label: '...' }]` (length 1) to
@@ -25,6 +38,7 @@ export interface AmountData {
 
 type Preset = { label: string; value: number | null };
 type FrequencyOption = { value: string; label: string };
+type PresetMode = "buttons" | "select";
 
 const props = withDefaults(
   defineProps<{
@@ -33,6 +47,9 @@ const props = withDefaults(
     title?: string;
     description?: string;
     presets?: ReadonlyArray<Preset> | ReadonlyArray<number>;
+    presetsLabel?: string;
+    /** `"buttons"` (chips) or `"select"` (dropdown) — see component docs. */
+    mode?: PresetMode;
     frequencies?: ReadonlyArray<FrequencyOption>;
     minAmount?: number;
     disabled?: boolean;
@@ -43,6 +60,8 @@ const props = withDefaults(
     title: "Tu donación",
     description: "Elegí el monto que querés donar.",
     presets: () => [],
+    presetsLabel: "Monto de la donación",
+    mode: "buttons",
     frequencies: () => [
       { value: "Mensual", label: "Todos los meses" },
       { value: "Única vez", label: "Por única vez" },
@@ -101,6 +120,36 @@ const presetWithCustom = computed(() => {
   if (hasCustomOption) return normalizedPresets.value;
   return [...normalizedPresets.value, { label: props.customLabel, value: null }];
 });
+
+/**
+ * Sentinel used **only for the `mode: "select"` path**. The native `<select>`
+ * cannot carry `null` through its DOM string layer, and `FieldSelect`'s
+ * placeholder logic treats `null` and `""` as the same state. Stringifying
+ * every option (`"__custom__"` for the "Otro monto" entry, the amount as a
+ * decimal string otherwise) makes each option's `value` attribute unique
+ * and lets us round-trip the user's choice cleanly.
+ */
+const CUSTOM_SELECT_VALUE = "__custom__";
+
+const selectModeOptions = computed(() =>
+  presetWithCustom.value.map((p) => ({
+    label: p.label,
+    value: p.value === null ? CUSTOM_SELECT_VALUE : String(p.value),
+  })),
+);
+
+const selectModeValue = computed<string>(() => {
+  const sel = presetSelection.value;
+  if (sel === null) return CUSTOM_SELECT_VALUE;
+  if (sel === "") return "";
+  return String(sel);
+});
+
+function onSelectModeChange(value: string | number | null) {
+  if (value === CUSTOM_SELECT_VALUE) return onPresetChange(null);
+  if (value === "" || value == null) return onPresetChange("");
+  onPresetChange(Number(value));
+}
 
 const customDisplay = ref<string>(
   props.modelValue.value != null
@@ -168,9 +217,9 @@ defineExpose({ validate });
 </script>
 
 <template>
-  <section class="space-y-5">
+  <section class="space-y-4">
     <header class="space-y-1">
-      <h2 class="text-base font-semibold text-foreground">{{ title }}</h2>
+      <h2 class="text-sm font-semibold text-foreground">{{ title }}</h2>
       <p class="text-sm leading-relaxed text-muted-foreground">
         {{ description }}
       </p>
@@ -187,10 +236,13 @@ defineExpose({ validate });
       @update:model-value="onFrequencyChange"
     />
 
+    <!--
+      Mode 1: chip buttons (default). Good for short numeric labels.
+    -->
     <FieldButtonGroup
-      v-if="showPresets"
+      v-if="showPresets && mode === 'buttons'"
       :model-value="presetSelection"
-      label="Monto de la donación"
+      :label="presetsLabel"
       :options="presetWithCustom"
       required
       :disabled="disabled"
@@ -212,10 +264,44 @@ defineExpose({ validate });
       </template>
     </FieldButtonGroup>
 
+    <!--
+      Mode 2: native <select>. Better when each preset has a long
+      descriptive label (e.g. "$76.600 mensual. Apadriná un/a joven.").
+      Mirrors the legacy debi-forms `type: "select"` config.
+    -->
+    <template v-else-if="showPresets && mode === 'select'">
+      <FieldSelect
+        :model-value="selectModeValue"
+        :label="presetsLabel"
+        :options="selectModeOptions"
+        placeholder="Seleccioná un monto"
+        required
+        :disabled="disabled"
+        :error="errors.value"
+        @update:model-value="onSelectModeChange"
+      />
+      <div v-if="presetSelection === null" class="-mt-1">
+        <FieldText
+          :model-value="customDisplay"
+          label="Monto personalizado"
+          placeholder="1.000"
+          inputmode="decimal"
+          autocomplete="transaction-amount"
+          :disabled="disabled"
+          @update:model-value="onCustomInput"
+        />
+      </div>
+    </template>
+
+    <!--
+      No presets at all — just a free-form numeric input. Used by the
+      "actualizar donación" flow, where the donor edits an existing
+      amount.
+    -->
     <FieldText
       v-else
       :model-value="customDisplay"
-      label="Monto de la donación"
+      :label="presetsLabel"
       placeholder="1.000"
       inputmode="decimal"
       autocomplete="transaction-amount"

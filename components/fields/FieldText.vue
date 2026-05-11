@@ -87,7 +87,7 @@ function onInput(event: Event) {
       :disabled="disabled"
       :aria-invalid="!!error || undefined"
       :aria-describedby="error ? `${inputId}-error` : undefined"
-      class="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25 disabled:opacity-60"
+      class="w-full rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25 disabled:opacity-60 sm:text-sm"
       @input="onInput"
       @focus="focused = true"
       @blur="focused = false"

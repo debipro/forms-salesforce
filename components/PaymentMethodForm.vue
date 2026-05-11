@@ -40,8 +40,10 @@ onMounted(() => {
       fontFamily: getCssVar("--font-sans-stack"),
       // 16px keeps mobile Safari from zooming into the input on focus.
       fontSize: "16px",
-      borderRadius: "10px",
-      spacing: "12px",
+      borderRadius: "8px",
+      spacing: "8px",
+      inputPaddingY: "8px",
+      inputPaddingX: "12px",
     },
     layout: {
       // `"icons"` renders tile buttons with the payment-method icon on top
@@ -174,10 +176,10 @@ defineExpose({ tokenizeIfApplicable });
     the `<script setup>` above; we never reach into `.debi-element__*`
     classes from our own CSS.
   -->
-  <div class="space-y-3">
+  <div class="space-y-2">
     <div
       :class="[
-        'rounded-xl border border-border bg-muted/40 p-5 sm:p-6',
+        'rounded-xl border border-border bg-muted/40 p-3 sm:p-4',
         disabled && 'pointer-events-none opacity-60',
       ]"
       :aria-disabled="disabled || undefined"

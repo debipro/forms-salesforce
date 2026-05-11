@@ -124,15 +124,15 @@ defineExpose({ validate });
 </script>
 
 <template>
-  <section class="space-y-5" :aria-disabled="disabled || undefined">
+  <section class="space-y-3" :aria-disabled="disabled || undefined">
     <header class="space-y-1">
-      <h2 class="text-base font-semibold text-foreground">{{ title }}</h2>
+      <h2 class="text-sm font-semibold text-foreground">{{ title }}</h2>
       <p class="text-sm leading-relaxed text-muted-foreground">
         {{ description }}
       </p>
     </header>
 
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <FieldText
         :model-value="modelValue.firstName"
         label="Nombre"
