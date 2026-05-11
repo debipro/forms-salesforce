@@ -1,6 +1,6 @@
-# forms-org — Formulario de donación (Debi + Salesforce)
+# debi-forms-salesforce — Formulario de donación (Debi + Salesforce)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdebipro%2Fforms-org&env=SF_INSTANCE_URL,SF_REFRESH_TOKEN,SF_LOGIN_URL,DEBI_PUBLIC_KEY,DEBI_SECRET_KEY&envDescription=Las%205%20variables%20que%20pid%C3%B3%20Debi.%20Para%20las%203%20de%20Salesforce%2C%20us%C3%A1%20el%20asistente%20de%20onboarding%20que%20te%20mande%20Debi.%20Para%20las%202%20de%20Debi%2C%20copialas%20de%20https%3A%2F%2Fdebi.pro%2Fdashboard%2Fdevelopers.&envLink=https%3A%2F%2Fgithub.com%2Fdebipro%2Fforms-org%23variables-de-entorno)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdebipro%2Fforms-salesforce&env=SF_INSTANCE_URL,SF_REFRESH_TOKEN,SF_LOGIN_URL,DEBI_PUBLIC_KEY,DEBI_SECRET_KEY&envDescription=Las%205%20variables%20que%20pid%C3%B3%20Debi.%20Para%20las%203%20de%20Salesforce%2C%20us%C3%A1%20el%20asistente%20de%20onboarding%20que%20te%20mande%20Debi.%20Para%20las%202%20de%20Debi%2C%20copialas%20de%20https%3A%2F%2Fdebi.pro%2Fdashboard%2Fdevelopers.&envLink=https%3A%2F%2Fgithub.com%2Fdebipro%2Fforms-salesforce%23variables-de-entorno)
 
 Template auto-deployable de un formulario para que los donantes actualicen
 su monto y método de pago. Una vez configurado, vive en
@@ -12,7 +12,7 @@ su monto y método de pago. Una vez configurado, vive en
 
 Pegale a la IA exactamente este texto:
 
-> Tengo un fork del template `debipro/forms-org`. Ayudame a deployarlo en
+> Tengo un fork del template `debipro/forms-salesforce`. Ayudame a deployarlo en
 > Vercel. Necesito configurar 5 variables de entorno: SF_INSTANCE_URL,
 > SF_REFRESH_TOKEN, SF_LOGIN_URL, DEBI_PUBLIC_KEY y DEBI_SECRET_KEY.
 > Para los 3 primeros tengo que pedir a Debi la URL del asistente de
