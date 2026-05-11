@@ -25,13 +25,19 @@ export default defineEventHandler(async (event) => {
       body.amount <= 0
     ) {
       setResponseStatus(event, 400);
-      return { error: true, message: "El monto tiene que ser un número positivo" };
+      return {
+        error: true,
+        message: "El monto tiene que ser un número positivo",
+      };
     }
 
     const token = body.paymentMethodToken;
     if (token !== undefined && token !== null && (!token.id || !token.type)) {
       setResponseStatus(event, 400);
-      return { error: true, message: "El token de método de pago no es válido" };
+      return {
+        error: true,
+        message: "El token de método de pago no es válido",
+      };
     }
 
     const data = await submitFlow({

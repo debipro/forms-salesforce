@@ -64,6 +64,35 @@ export class FlowRequestError extends Error {
   }
 }
 
+/**
+ * Shape of the personal data captured by `PersonalDataStep`. Optional
+ * fields stay as empty strings when the step renders without them.
+ */
+export type AltaPersonal = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  /** ISO YYYY-MM-DD (already transformed). Optional in some flows. */
+  birthDate?: string;
+  country?: string;
+  province?: string;
+};
+
+/**
+ * Free-form custom fields that a flow page may want to write straight
+ * onto Contact / Opportunity / Recurring Donation. Each key must be a
+ * valid Salesforce API name (e.g., `Captador__c`, `Observaciones__c`).
+ *
+ * The runtime forwards them unchanged: this is the escape hatch for
+ * flows that need org-specific fields without growing this util.
+ */
+export type AltaExtraFields = {
+  contact?: Record<string, string | number | boolean | null>;
+  opportunity?: Record<string, string | number | boolean | null>;
+  recurring?: Record<string, string | number | boolean | null>;
+};
+
 function requireString(value: string | undefined, label: string): string {
   if (!value) {
     throw new Error(`Falta la variable de entorno obligatoria: ${label}`);
@@ -355,5 +384,191 @@ export async function submitFlow(input: {
     );
 
     return { salesforcePaymentMethodId, recurringUpdated };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Alta (new donor): create Contact + Opportunity + (optional) Recurring
+// Donation + Payment Method, all linked together.
+// ---------------------------------------------------------------------------
+
+/**
+ * Contact field map — kept in this file (not in `FIELD_MAP`) because most
+ * orgs use the standard names (`FirstName`, `LastName`, `Email`, etc.).
+ * Override here if the org renamed them.
+ */
+const CONTACT_FIELDS = {
+  firstName: "FirstName",
+  lastName: "LastName",
+  email: "Email",
+  phone: "MobilePhone",
+  birthDate: "Birthdate",
+  country: "MailingCountry",
+  province: "MailingState",
+} as const;
+
+/**
+ * Opportunity defaults for new altas. `StageName` is required by Salesforce
+ * on every Opportunity insert. Override the constants in this section to
+ * match your sales process.
+ */
+const ALTA_OPP_DEFAULTS = {
+  stageName: "Pledged",
+  closeDateOffsetDays: 0,
+  recordTypeName: null as string | null,
+};
+
+async function findContactByEmail(
+  conn: Connection,
+  email: string,
+): Promise<string | null> {
+  const safe = escapeSoql(email);
+  const result = await conn.query<{ Id: string }>(
+    `SELECT Id FROM Contact WHERE Email = '${safe}' LIMIT 1`,
+  );
+  return result.records[0]?.Id ?? null;
+}
+
+/**
+ * Find or create a Contact for the donor. Lookup is by email; if no
+ * existing contact matches, we insert a new one with whatever personal
+ * data the flow page collected.
+ */
+export async function findOrCreateContact(input: {
+  personal: AltaPersonal;
+  extra?: AltaExtraFields["contact"];
+}): Promise<{ contactId: string; created: boolean }> {
+  if (!input.personal.email) {
+    throw new FlowRequestError(
+      "Falta el email del donante para crear el contacto.",
+      400,
+    );
+  }
+  return withSalesforceConnection(async (conn) => {
+    const existing = await findContactByEmail(conn, input.personal.email);
+    if (existing) {
+      return { contactId: existing, created: false };
+    }
+
+    const payload: Record<string, unknown> = {
+      [CONTACT_FIELDS.firstName]: input.personal.firstName,
+      [CONTACT_FIELDS.lastName]: input.personal.lastName,
+      [CONTACT_FIELDS.email]: input.personal.email,
+      [CONTACT_FIELDS.phone]: input.personal.phone,
+    };
+    if (input.personal.birthDate) {
+      payload[CONTACT_FIELDS.birthDate] = input.personal.birthDate;
+    }
+    if (input.personal.country) {
+      payload[CONTACT_FIELDS.country] = input.personal.country;
+    }
+    if (input.personal.province) {
+      payload[CONTACT_FIELDS.province] = input.personal.province;
+    }
+    if (input.extra) Object.assign(payload, input.extra);
+
+    const result = await conn.sobject("Contact").create(payload);
+    if (!result.success || !result.id) {
+      throw new Error("No se pudo crear el contacto en Salesforce");
+    }
+    return { contactId: result.id, created: true };
+  });
+}
+
+function todayPlusDays(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Creates the donation chain for an alta:
+ *
+ *   Contact (must exist) → Opportunity → [optional Recurring Donation] → Payment Method
+ *
+ * Returns the IDs of every record it touched so the caller can render a
+ * success state or follow up with extra writes.
+ */
+export async function createDonationChain(input: {
+  contactId: string;
+  amount: number;
+  /** `"Mensual"` triggers RD creation; anything else creates a one-time Opp. */
+  frequency: string;
+  paymentMethodToken: DebiPaymentToken;
+  campaign?: string | null;
+  /** Free text — written to `Description` on the Opportunity if provided. */
+  observations?: string | null;
+  extra?: AltaExtraFields;
+  /** Override the default `StageName` for the Opportunity. */
+  stageName?: string;
+}): Promise<{
+  opportunityId: string;
+  recurringDonationId: string | null;
+  paymentMethodId: string;
+}> {
+  return withSalesforceConnection(async (conn) => {
+    const isRecurring = input.frequency === "Mensual";
+    const map = FIELD_MAP;
+
+    const paymentMethodId = await createPaymentMethod(
+      conn,
+      input.paymentMethodToken,
+      input.contactId,
+    );
+
+    let recurringDonationId: string | null = null;
+    if (isRecurring) {
+      const recurringPayload: Record<string, unknown> = {
+        Name: `RD ${input.contactId} ${todayPlusDays(0)}`,
+        npe03__Contact__c: input.contactId,
+        [map.recurring.amount]: input.amount,
+        [map.recurring.paymentMethod]: paymentMethodId,
+        npe03__Installment_Period__c: "Monthly",
+        npe03__Date_Established__c: todayPlusDays(0),
+      };
+      if (input.extra?.recurring) {
+        Object.assign(recurringPayload, input.extra.recurring);
+      }
+      const rdResult = await conn
+        .sobject(map.recurring.sobject)
+        .create(recurringPayload);
+      if (!rdResult.success || !rdResult.id) {
+        throw new Error("No se pudo crear la donación recurrente.");
+      }
+      recurringDonationId = rdResult.id;
+    }
+
+    const oppName = `${isRecurring ? "Donación recurrente" : "Donación única"} - ${todayPlusDays(0)}`;
+    const oppPayload: Record<string, unknown> = {
+      Name: oppName,
+      ContactId: input.contactId,
+      StageName: input.stageName ?? ALTA_OPP_DEFAULTS.stageName,
+      CloseDate: todayPlusDays(ALTA_OPP_DEFAULTS.closeDateOffsetDays),
+      [map.opportunity.amount]: input.amount,
+      [map.opportunity.paymentMethod]: paymentMethodId,
+    };
+    if (recurringDonationId) {
+      oppPayload[map.opportunity.recurringLookup] = recurringDonationId;
+    }
+    if (input.campaign) {
+      oppPayload["CampaignId"] = input.campaign;
+    }
+    if (input.observations) {
+      oppPayload["Description"] = input.observations;
+    }
+    if (input.extra?.opportunity) {
+      Object.assign(oppPayload, input.extra.opportunity);
+    }
+
+    const oppResult = await conn.sobject("Opportunity").create(oppPayload);
+    if (!oppResult.success || !oppResult.id) {
+      throw new Error("No se pudo crear la oportunidad en Salesforce.");
+    }
+
+    return {
+      opportunityId: oppResult.id,
+      recurringDonationId,
+      paymentMethodId,
+    };
   });
 }

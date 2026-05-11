@@ -83,6 +83,17 @@ onMounted(() => {
     // for tests / offline preview.
     defaultType: "card",
     strict: true,
+    methods: {
+      // We capture cards for recurring debit, so the gateway only needs the
+      // card number — expiration and CVV are not used and would otherwise
+      // get auto-detected as `"optional"` from the merchant's
+      // `card.required_fields`. Force `"hidden"` to drop them from the UI
+      // and the tokenization payload entirely.
+      card: {
+        expiration: "hidden",
+        securityCode: "hidden",
+      },
+    },
   });
   paymentElement.on("change", (state: DebiElementState) => {
     isEmpty.value = state.empty;
@@ -151,24 +162,19 @@ defineExpose({ tokenizeIfApplicable });
 </script>
 
 <template>
-  <div class="space-y-4">
-    <div>
-      <h2 class="text-base font-semibold text-foreground">
-        Dónde querés que cobremos
-      </h2>
-      <p class="mt-1 text-sm leading-relaxed text-muted-foreground">
-        Si querés cambiar tarjeta o CBU, completá los datos abajo. Si solo
-        querés actualizar el monto, podés dejar esta parte en blanco y tocar
-        Guardar.
-      </p>
-    </div>
+  <!--
+    Low-level primitive: just mounts the Debi `payment-method` element.
+    Sections, titles and intro copy are intentionally NOT included here —
+    callers (`PaymentMethodStep` for the alta wizard, or a flow page using
+    this directly) own that chrome. This keeps the component reusable
+    inside or outside a step wrapper.
 
-    <!-- Debi mounts the entire payment-method UI inside `mountTarget`. The
-         outer container provides only chrome that the SDK doesn't ship
-         (a "form card" wrapper). Everything inside — including tabs,
-         labels, inputs and brand badges — is styled exclusively via the
-         `appearance` object passed to `debi.elements()` above. We do not
-         reach into `.debi-element__*` classes from our own CSS. -->
+    The SDK paints the entire tabs/labels/inputs/brand-badge UI inside
+    `mountTarget`. Everything is styled via the `appearance` object in
+    the `<script setup>` above; we never reach into `.debi-element__*`
+    classes from our own CSS.
+  -->
+  <div class="space-y-3">
     <div
       :class="[
         'rounded-xl border border-border bg-muted/40 p-5 sm:p-6',

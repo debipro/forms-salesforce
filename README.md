@@ -2,9 +2,15 @@
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdebipro%2Fforms-salesforce&env=SF_INSTANCE_URL,SF_REFRESH_TOKEN,SF_LOGIN_URL,DEBI_PUBLIC_KEY,DEBI_SECRET_KEY&envDescription=Las%205%20variables%20que%20pid%C3%B3%20Debi.%20Para%20las%203%20de%20Salesforce%2C%20us%C3%A1%20el%20asistente%20de%20onboarding%20que%20te%20mande%20Debi.%20Para%20las%202%20de%20Debi%2C%20copialas%20de%20https%3A%2F%2Fdebi.pro%2Fdashboard%2Fdevelopers.&envLink=https%3A%2F%2Fgithub.com%2Fdebipro%2Fforms-salesforce%23variables-de-entorno)
 
-Template auto-deployable de un formulario para que los donantes actualicen
-su monto y método de pago. Una vez configurado, vive en
-`https://<tu-proyecto>.vercel.app/flow/<id-de-oportunidad>`.
+Template auto-deployable de formularios de donación. Trae tres flows
+listos para usar:
+
+- **Alta de donante** (Techo): `https://<tu-proyecto>.vercel.app/flow/alta`
+- **Alta de donante** (ejemplo Reciduca): `https://<tu-proyecto>.vercel.app/flow/reciduca`
+- **Actualizar donación por link** (autoservicio): `https://<tu-proyecto>.vercel.app/flow/actualizar-donacion/<id-de-oportunidad>`
+
+Cada flow es un archivo en `pages/flow/`. Para agregar uno nuevo, mirá
+[`add_a_flow.md`](./add_a_flow.md).
 
 ---
 
@@ -38,8 +44,9 @@ Pegale a la IA exactamente este texto:
    - `DEBI_PUBLIC_KEY` → el valor `pk_live_*` (publishable)
    - `DEBI_SECRET_KEY` → el valor `sk_live_*` (secret)
 4. **Pegá los 5 valores en Vercel** y tocá **Deploy**.
-5. A los ~2 minutos tu formulario está vivo en
-   `https://<tu-proyecto>.vercel.app/flow/<id-de-oportunidad>`.
+5. A los ~2 minutos tus formularios están vivos en
+   `https://<tu-proyecto>.vercel.app/flow/alta` y
+   `https://<tu-proyecto>.vercel.app/flow/actualizar-donacion/<id-de-oportunidad>`.
 
 ---
 
@@ -72,9 +79,10 @@ o el `.css` y editalo (con la ayuda de v0 / Cursor si querés).
 |---|---|
 | Color primario / fondos | `assets/css/main.css` (`--primary`, `--background` y compañía) |
 | Tipografía principal | `assets/css/main.css` (`--font-sans-stack`) y el `<link>` de Google Fonts en `nuxt.config.ts` |
-| Textos / copys del formulario | los `.vue` en `components/` y `pages/` |
+| Textos / copys de un flow | el `.vue` de ese flow en `pages/flow/` |
+| Campos de un step | el `.vue` del step en `components/steps/` |
 | Nombres API de campos en Salesforce | la constante `FIELD_MAP` en `server/utils/salesforce.ts` |
-| Agregar un flujo nuevo | mirá [`add_a_flow.md`](./add_a_flow.md) |
+| Agregar un flow nuevo | mirá [`add_a_flow.md`](./add_a_flow.md) |
 
 ---
 
@@ -89,8 +97,12 @@ cp .env.example .env
 npm run dev
 ```
 
-Abre <http://localhost:3001/flow/006XXXXXXXXXXXX> reemplazando el ID por
-una oportunidad real de tu Salesforce.
+Abre uno de los flows:
+
+- <http://localhost:3001/flow/alta> — alta de donante de Techo
+- <http://localhost:3001/flow/reciduca> — ejemplo de alta con otro layout
+- <http://localhost:3001/flow/actualizar-donacion/006XXXXXXXXXXXX> — reemplazá
+  el ID por una oportunidad real de tu Salesforce.
 
 > El puerto local es **3001**, no 3000. Esto es para que coexista con el
 > asistente de onboarding central de Debi (también Nuxt 3) si lo corrés en
@@ -112,9 +124,23 @@ Puede que Debi, ofrezca nuevas plantillas, que podrían ser **2-3 archivos** que
 
 ## ¿Qué hace exactamente este formulario?
 
-- **`GET /flow/:oppId`** → muestra al donante un formulario con su monto
-  actual y los campos para ingresar tarjeta o CBU.
-- **`POST /api/flow/:oppId`** →
+Hay dos tipos de flow:
+
+### 1. Alta de donante (`/flow/alta`, `/flow/reciduca`, …)
+
+- El donante completa sus datos personales, elige un monto, ingresa tarjeta
+  o CBU y acepta los términos.
+- La SDK de Debi tokeniza el método de pago en el navegador con
+  `DEBI_PUBLIC_KEY`.
+- El backend crea o reusa un **Contact**, crea una **Opportunity** (más
+  una **Recurring Donation** si la frecuencia es mensual), y crea un
+  **TCPagos__Payment_Method__c** vinculado, todo en Salesforce.
+
+### 2. Autoservicio del donante (`/flow/actualizar-donacion/<oppId>`)
+
+- **`GET /api/flow/actualizar-donacion/:oppId`** → muestra al donante su
+  monto actual y los campos para ingresar tarjeta o CBU.
+- **`POST /api/flow/actualizar-donacion/:oppId`** →
   1. Tokeniza la tarjeta/CBU con Debi (la SDK lo hace en el navegador con
      `DEBI_PUBLIC_KEY`).
   2. Crea un registro `TCPagos__Payment_Method__c` en Salesforce con el
@@ -132,20 +158,53 @@ en el backend de Vercel.
 ```
 .
 ├── pages/
-│   ├── index.vue                 (landing simple)
-│   └── flow/[oppId].vue          (página del donante)
+│   ├── index.vue                              (landing simple)
+│   └── flow/                                  (un .vue = un flow)
+│       ├── alta.vue                           (alta de donante - Techo)
+│       ├── reciduca.vue                       (alta de donante - ejemplo Reciduca)
+│       └── actualizar-donacion/
+│           └── [oppId].vue                    (autoservicio por link)
+│
 ├── components/
-│   ├── FlowForm.vue              (formulario completo)
-│   ├── PaymentMethodForm.vue     (subform de tarjeta/CBU + tokenización)
-│   └── ThemeSwitcher.vue         (claro / oscuro / auto)
+│   ├── PaymentMethodForm.vue                  (elemento Debi para tokenizar)
+│   ├── ThemeSwitcher.vue                      (claro / oscuro / auto)
+│   ├── flow/
+│   │   ├── MultiStepFlow.vue                  (orquestador de wizards)
+│   │   └── StepsIndicator.vue                 (barra de progreso)
+│   ├── fields/                                (inputs reutilizables)
+│   │   ├── FieldText.vue
+│   │   ├── FieldSelect.vue
+│   │   ├── FieldButtonGroup.vue
+│   │   └── FieldCheckbox.vue
+│   └── steps/                                 (pasos reutilizables del wizard)
+│       ├── PersonalDataStep.vue
+│       ├── AmountStep.vue
+│       ├── PaymentMethodStep.vue
+│       ├── IdentificationStep.vue
+│       └── AcceptanceStep.vue
+│
 ├── composables/
-│   ├── useDebiClient.ts          (handle al SDK de Debi en el browser)
-│   └── useThemePreference.ts     (storage del tema)
+│   ├── useDebiClient.ts                       (handle al SDK de Debi)
+│   ├── useThemePreference.ts                  (storage del tema)
+│   ├── useFlowState.ts                        (estado compartido entre pasos)
+│   ├── useFlowStep.ts                         (registro de un step en el wizard)
+│   ├── validators.ts                          (email, DNI, CUIT, etc.)
+│   └── formatters.ts                          (fechas, montos)
+│
+├── data/
+│   └── argentina.ts                           (lista de países + provincias)
+│
 ├── server/
-│   ├── api/flow/[oppId].get.ts   (lectura de la oportunidad)
-│   ├── api/flow/[oppId].post.ts  (envío del flujo)
-│   └── utils/salesforce.ts       (jsforce + lógica de Salesforce)
-├── assets/css/main.css           (tokens de colores y fuentes)
+│   ├── api/flow/
+│   │   ├── alta.post.ts                       (alta de Techo)
+│   │   ├── reciduca.post.ts                   (alta de Reciduca)
+│   │   └── actualizar-donacion/
+│   │       ├── [oppId].get.ts                 (lectura de la oportunidad)
+│   │       └── [oppId].post.ts                (envío del flujo)
+│   └── utils/salesforce.ts                    (jsforce + lógica de Salesforce)
+│
+├── assets/css/main.css                        (tokens de colores y fuentes)
+├── add_a_flow.md                              (cómo agregar un flow)
 ├── nuxt.config.ts
 ├── package.json
 └── .env.example

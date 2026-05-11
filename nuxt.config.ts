@@ -31,6 +31,14 @@ export default defineNuxtConfig({
     },
   },
 
+  // Disable Nuxt's default directory-prefixing so components in nested
+  // folders keep their natural names. Without this, `components/fields/
+  // FieldText.vue` auto-imports as `<FieldsFieldText>` and
+  // `components/flow/StepsIndicator.vue` as `<FlowStepsIndicator>`, which
+  // breaks silently (unknown tags render as empty DOM elements with no
+  // error). One entry is enough — it recurses into all subfolders.
+  components: [{ path: "~/components", pathPrefix: false }],
+
   css: ["~/assets/css/main.css"],
 
   vite: {
