@@ -107,6 +107,7 @@ Puede que Debi, ofrezca nuevas plantillas, que podrían ser **2-3 archivos** que
 `pages/flow/<nombre>.vue` y `server/api/flow/<nombre>.post.ts`), modificar según preferencias, y luego commit, push y en caso de usar Vercel se auto-deploya.
 
 
+
 ---
 
 ## ¿Qué hace exactamente este formulario?

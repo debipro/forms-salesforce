@@ -68,7 +68,7 @@ export default defineNuxtConfig({
         // on first paint. Placed in <head> so it executes synchronously before
         // <body> is rendered.
         {
-          hid: "theme-init",
+          key: "theme-init",
           tagPosition: "head",
           innerHTML: THEME_INIT_SCRIPT,
         },
