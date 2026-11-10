@@ -529,12 +529,57 @@ const CONTACT_FIELDS = {
  * Opportunity defaults for new altas. `StageName` is required by Salesforce
  * on every Opportunity insert. Override the constants in this section to
  * match your sales process.
+ *
+ * `procesador_de_pagos__c = "TuCuota"` is what makes the org's Flow create
+ * the `TCPagos__Pago__c` charge; without it the Opportunity is never billed.
  */
 const ALTA_OPP_DEFAULTS = {
   stageName: "Pledged",
-  closeDateOffsetDays: 0,
-  recordTypeName: null as string | null,
+  /** DeveloperName of the Opportunity RecordType; `null` uses the user's default. */
+  recordTypeDeveloperName: "General" as string | null,
+  /** Charges created after this day of the month move to the 1st of next month. */
+  lastChargeDayOfMonth: 25,
+  fields: { procesador_de_pagos__c: "TuCuota" } as Record<string, string>,
 };
+
+/**
+ * Recurring Donation defaults. The org's validation rule requires day 1 when
+ * the processor is TuCuota.
+ */
+const ALTA_RECURRING_DEFAULTS = {
+  fields: {
+    Procesador_de_pagos__c: "TuCuota",
+    npsp__Day_of_Month__c: "1",
+    npsp__RecurringType__c: "Open",
+    npsp__Status__c: "Active",
+  } as Record<string, string>,
+  /** The org's Flow creates the current-month Opportunity only between these days. */
+  currentMonthOppFromDay: 2,
+  currentMonthOppToDay: 20,
+};
+
+/**
+ * NPSP validation rules reject a Contact with an email or mobile phone but
+ * no preferred email / phone picklist value.
+ */
+function contactPreferenceFields(
+  email: string,
+  phone: string | null | undefined,
+): Record<string, string> {
+  const fields: Record<string, string> = {
+    npe01__HomeEmail__c: email,
+    npe01__Preferred_Email__c: "Particular",
+  };
+  if (phone) fields.npe01__PreferredPhone__c = "Mobile";
+  return fields;
+}
+
+/** Writes the donor's document number where the org's AFIP formulas read it. */
+const CONTACT_DOCUMENT_FIELDS = {
+  documentNumber: "N_de_documento__c",
+  cuit: "CUIT__c",
+};
+const OPPORTUNITY_DOCUMENT_FIELD = "CUIT__c";
 
 async function findContactByEmail(
   conn: Connection,
@@ -573,6 +618,7 @@ export async function findOrCreateContact(input: {
       [CONTACT_FIELDS.lastName]: input.personal.lastName,
       [CONTACT_FIELDS.email]: input.personal.email,
       [CONTACT_FIELDS.phone]: input.personal.phone,
+      ...contactPreferenceFields(input.personal.email, input.personal.phone),
     };
     if (input.personal.birthDate) {
       payload[CONTACT_FIELDS.birthDate] = input.personal.birthDate;
@@ -604,13 +650,52 @@ function todayPlusDays(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Salesforce date formulas (`TODAY()`) run in the org's timezone, not UTC. */
+const ORG_TIMEZONE = "America/Argentina/Buenos_Aires";
+
+function orgToday(): { iso: string; year: number; month: number; day: number } {
+  const iso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: ORG_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const [year, month, day] = iso.split("-").map(Number);
+  return { iso, year, month, day };
+}
+
+/** Today, or the 1st of next month once the month's charge window closed. */
+function altaCloseDate(): string {
+  const today = orgToday();
+  if (today.day <= ALTA_OPP_DEFAULTS.lastChargeDayOfMonth) return today.iso;
+  const year = today.month === 12 ? today.year + 1 : today.year;
+  const month = today.month === 12 ? 1 : today.month + 1;
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
+async function findOpportunityRecordTypeId(
+  conn: Connection,
+  developerName: string | null,
+): Promise<string | null> {
+  if (!developerName) return null;
+  const result = await conn.query<{ Id: string }>(
+    `SELECT Id FROM RecordType WHERE SobjectType = 'Opportunity' AND DeveloperName = '${escapeSoql(developerName)}' AND IsActive = true LIMIT 1`,
+  );
+  return result.records[0]?.Id ?? null;
+}
+
 /**
  * Creates the donation chain for an alta:
  *
- *   Contact (must exist) → Opportunity → [optional Recurring Donation] → Payment Method
+ *   Contact (must exist) → Payment Method → Recurring Donation (mensual)
+ *                                         → Opportunity (única vez)
  *
- * Returns the IDs of every record it touched so the caller can render a
- * success state or follow up with extra writes.
+ * The Payment Method, Opportunity and Recurring Donation all have to share
+ * the Contact's Account (the payment package rejects mismatches).
+ *
+ * Monthly altas create only the Recurring Donation: NPSP and the org's Flows
+ * generate its Opportunities, and the org rejects a second Opportunity for
+ * the same Recurring Donation in the same month.
  */
 export async function createDonationChain(input: {
   contactId: string;
@@ -619,19 +704,59 @@ export async function createDonationChain(input: {
   frequency: string;
   paymentMethodToken: DebiPaymentToken;
   campaign?: string | null;
-  /** Free text — written to `Description` on the Opportunity if provided. */
+  /** DNI / CUIT, written to the Contact (and to the Opportunity for one-time gifts). */
+  documentNumber?: string | null;
+  /** Free text — written to `Description` on the one-time Opportunity if provided. */
   observations?: string | null;
   extra?: AltaExtraFields;
   /** Override the default `StageName` for the Opportunity. */
   stageName?: string;
 }): Promise<{
-  opportunityId: string;
+  opportunityId: string | null;
   recurringDonationId: string | null;
   paymentMethodId: string;
 }> {
   return withSalesforceConnection(async (conn) => {
     const isRecurring = input.frequency === "Mensual";
     const map = FIELD_MAP;
+    const today = orgToday();
+
+    const contact = (
+      await conn.query<{ AccountId: string | null; CUIT__c: string | null }>(
+        `SELECT AccountId, ${CONTACT_DOCUMENT_FIELDS.cuit} FROM Contact WHERE Id = '${escapeSoql(input.contactId)}' LIMIT 1`,
+      )
+    ).records[0];
+    if (!contact) {
+      throw new FlowRequestError("No se encontró el contacto del donante.", 404);
+    }
+    const accountId = contact.AccountId;
+    if (!accountId) {
+      throw new FlowRequestError(
+        "El contacto no tiene una cuenta asociada en Salesforce.",
+      );
+    }
+
+    const documentNumber = input.documentNumber?.trim() || null;
+    const contactUpdate: Record<string, unknown> = { ...input.extra?.contact };
+    if (documentNumber) {
+      contactUpdate[CONTACT_DOCUMENT_FIELDS.documentNumber] = documentNumber;
+      if (!contact.CUIT__c) {
+        contactUpdate[CONTACT_DOCUMENT_FIELDS.cuit] = documentNumber;
+      }
+    }
+    if (Object.keys(contactUpdate).length > 0) {
+      const contactResult = await conn
+        .sobject("Contact")
+        .update({ Id: input.contactId, ...contactUpdate });
+      if (!contactResult.success) {
+        throw new FlowRequestError(
+          formatSaveFailure(
+            contactResult,
+            "No se pudo actualizar el contacto en Salesforce",
+          ),
+        );
+      }
+    }
 
     const paymentMethodId = await createPaymentMethod(
       conn,
@@ -639,16 +764,25 @@ export async function createDonationChain(input: {
       input.contactId,
     );
 
-    let recurringDonationId: string | null = null;
     if (isRecurring) {
       const recurringPayload: Record<string, unknown> = {
-        Name: `RD ${input.contactId} ${todayPlusDays(0)}`,
+        Name: `RD ${input.contactId} ${today.iso}`,
         npe03__Contact__c: input.contactId,
+        npe03__Organization__c: accountId,
         [map.recurring.amount]: input.amount,
         [map.recurring.paymentMethod]: paymentMethodId,
         npe03__Installment_Period__c: "Monthly",
-        npe03__Date_Established__c: todayPlusDays(0),
+        npe03__Date_Established__c: today.iso,
+        npsp__StartDate__c: today.iso,
+        Crear_oportunidad_mes_en_curso__c:
+          today.day >= ALTA_RECURRING_DEFAULTS.currentMonthOppFromDay &&
+          today.day <= ALTA_RECURRING_DEFAULTS.currentMonthOppToDay,
+        ...ALTA_RECURRING_DEFAULTS.fields,
       };
+      if (input.campaign) {
+        recurringPayload["npe03__Recurring_Donation_Campaign__c"] =
+          input.campaign;
+      }
       if (input.extra?.recurring) {
         Object.assign(recurringPayload, input.extra.recurring);
       }
@@ -663,20 +797,34 @@ export async function createDonationChain(input: {
           ),
         );
       }
-      recurringDonationId = rdResult.id;
+      return {
+        opportunityId: null,
+        recurringDonationId: rdResult.id,
+        paymentMethodId,
+      };
     }
 
-    const oppName = `${isRecurring ? "Donación recurrente" : "Donación única"} - ${todayPlusDays(0)}`;
+    const closeDate = altaCloseDate();
     const oppPayload: Record<string, unknown> = {
-      Name: oppName,
+      Name: `Donación única - ${closeDate}`,
+      AccountId: accountId,
       ContactId: input.contactId,
+      npsp__Primary_Contact__c: input.contactId,
       StageName: input.stageName ?? ALTA_OPP_DEFAULTS.stageName,
-      CloseDate: todayPlusDays(ALTA_OPP_DEFAULTS.closeDateOffsetDays),
+      CloseDate: closeDate,
       [map.opportunity.amount]: input.amount,
       [map.opportunity.paymentMethod]: paymentMethodId,
+      ...ALTA_OPP_DEFAULTS.fields,
     };
-    if (recurringDonationId) {
-      oppPayload[map.opportunity.recurringLookup] = recurringDonationId;
+    const recordTypeId = await findOpportunityRecordTypeId(
+      conn,
+      ALTA_OPP_DEFAULTS.recordTypeDeveloperName,
+    );
+    if (recordTypeId) {
+      oppPayload["RecordTypeId"] = recordTypeId;
+    }
+    if (documentNumber) {
+      oppPayload[OPPORTUNITY_DOCUMENT_FIELD] = documentNumber;
     }
     if (input.campaign) {
       oppPayload["CampaignId"] = input.campaign;
@@ -700,7 +848,7 @@ export async function createDonationChain(input: {
 
     return {
       opportunityId: oppResult.id,
-      recurringDonationId,
+      recurringDonationId: null,
       paymentMethodId,
     };
   });

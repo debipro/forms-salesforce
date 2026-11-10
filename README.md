@@ -107,9 +107,11 @@ tarjeta de prueba (`4509 9535 6623 3704`, cualquier fecha futura, cualquier
 CVV de 3 dígitos), DNI y tildá los términos. Tocá *Donar*. Si todo va bien
 vas a ver *"¡Gracias por sumarte!"* en verde.
 
-Andá a tu Salesforce: tenés que ver el nuevo Contact con su Opportunity
-linkeada, su Recurring Donation, y un `TCPagos__Payment_Method__c` con
-el id de Debi (`pm_test_*`).
+Andá a tu Salesforce: tenés que ver el nuevo Contact con su Recurring
+Donation (si elegiste Mensual) u Opportunity (si elegiste única vez), y un
+`TCPagos__Payment_Method__c` con el id de Debi (`pm_test_*`). Las
+Opportunities de una donación mensual las genera Salesforce (NPSP y los
+Flows de la org) a partir de la Recurring Donation.
 
 ### Paso 3 — Actualizar donación (front)
 
@@ -376,9 +378,17 @@ en paralelo.
    tokeniza la tarjeta o CBU en el navegador con `DEBI_PUBLIC_KEY`.
 4. El back recibe el token y crea, en cadena:
    - un `TCPagos__Payment_Method__c` linkeado al Contact,
-   - una `npe03__Recurring_Donation__c` si la frecuencia es Mensual,
-   - una `Opportunity` apuntando al Contact, al Payment Method y a la
-     Recurring Donation.
+   - una `npe03__Recurring_Donation__c` si la frecuencia es Mensual
+     (con `Procesador_de_pagos__c = TuCuota` y día de cobro 1); sus
+     Opportunities las genera Salesforce,
+   - o una `Opportunity` si es única vez, con la misma cuenta del
+     Contact (`AccountId`), el Payment Method y
+     `procesador_de_pagos__c = TuCuota` para que se genere el cobro.
+
+   El Payment Method, la Recurring Donation y la Opportunity tienen que
+   compartir la cuenta del Contact; si no, el paquete de pagos rechaza
+   el registro con *"El método de pago debe pertenecer a la misma
+   cuenta"*.
 
 ### Autoservicio (`actualizar-donacion`)
 
