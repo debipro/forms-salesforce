@@ -148,6 +148,10 @@ export default defineEventHandler(async (event) => {
 
     return { error: false, mode, data };
   } catch (error) {
+    console.error("[gestion-donacion] submit failed", {
+      id,
+      error: error instanceof Error ? error.message : error,
+    });
     if (error instanceof FlowRequestError) {
       setResponseStatus(event, error.status);
       return { error: true, message: error.message };

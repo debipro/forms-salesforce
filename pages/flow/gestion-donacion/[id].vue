@@ -283,13 +283,23 @@ async function load() {
       frequency: prefilledFrequency,
     };
   } catch (error) {
-    errorMessage.value =
-      error instanceof Error
-        ? error.message
-        : "No pudimos cargar tu información.";
+    errorMessage.value = fetchErrorMessage(
+      error,
+      "No pudimos cargar tu información.",
+    );
   } finally {
     isLoading.value = false;
   }
+}
+
+/**
+ * `$fetch` throws on 4xx with a generic `[POST] "/api/...": 422` message;
+ * the API's own explanation lives in `error.data.message`.
+ */
+function fetchErrorMessage(error: unknown, fallback: string): string {
+  const data = (error as { data?: { message?: unknown } } | null)?.data;
+  if (typeof data?.message === "string" && data.message) return data.message;
+  return error instanceof Error ? error.message : fallback;
 }
 
 // Handle form submission
@@ -350,10 +360,10 @@ async function handleSubmit() {
 
     successMessage.value = finalSuccessMessage.value;
   } catch (error) {
-    errorMessage.value =
-      error instanceof Error
-        ? error.message
-        : "No pudimos guardar los cambios.";
+    errorMessage.value = fetchErrorMessage(
+      error,
+      "No pudimos guardar los cambios.",
+    );
   } finally {
     isSubmitting.value = false;
   }

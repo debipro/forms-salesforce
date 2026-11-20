@@ -559,6 +559,77 @@ const ALTA_RECURRING_DEFAULTS = {
 };
 
 /**
+ * Written when a closed Recurring Donation goes back to Active. The org's
+ * validation rules require a reactivation type, plus date and office for
+ * Argentina. Fields missing from the org are skipped (see
+ * `existingRecurringFields`), so orgs without them keep working.
+ */
+const REACTIVATION_DEFAULTS = {
+  fields: {
+    Tipo_de_reactivacion__c: "Recupero",
+    Sede_que_reactiva__c: "Oficina Nacional",
+  } as Record<string, string>,
+  dateField: "Fecha_de_la_reactivaci_n__c",
+};
+
+/**
+ * In multi-currency orgs Salesforce rejects linking an Opportunity to a
+ * Recurring Donation in a different currency, and a new RD otherwise gets
+ * the integration user's default currency. Single-currency orgs have no
+ * `CurrencyIsoCode` field, so the query fails and we return null.
+ */
+async function opportunityCurrency(
+  conn: Connection,
+  oppId: string,
+): Promise<string | null> {
+  try {
+    const result = await conn.query<{ CurrencyIsoCode?: string }>(
+      `SELECT CurrencyIsoCode FROM Opportunity WHERE Id = '${escapeSoql(oppId)}' LIMIT 1`,
+    );
+    return result.records[0]?.CurrencyIsoCode ?? null;
+  } catch {
+    return null;
+  }
+}
+
+let recurringFieldNames: Set<string> | null = null;
+
+async function existingRecurringFields(
+  conn: Connection,
+  names: string[],
+): Promise<string[]> {
+  if (!recurringFieldNames) {
+    const described = await conn.sobject(FIELD_MAP.recurring.sobject).describe();
+    recurringFieldNames = new Set(described.fields.map((f) => f.name));
+  }
+  return names.filter((name) => recurringFieldNames!.has(name));
+}
+
+/**
+ * Removes records created earlier in a submit that failed later, so a
+ * failed attempt doesn't leave a Payment Method (or RD) with nothing
+ * pointing at it. Failures are logged, not thrown: the original error is
+ * the one the donor needs to see.
+ */
+async function discardCreated(
+  conn: Connection,
+  sobject: string,
+  ids: Array<string | null | undefined>,
+): Promise<void> {
+  const toDelete = ids.filter((id): id is string => Boolean(id));
+  if (toDelete.length === 0) return;
+  try {
+    await conn.sobject(sobject).destroy(toDelete);
+  } catch (error) {
+    console.error("[salesforce] cleanup after failed submit failed", {
+      sobject,
+      ids: toDelete,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+}
+
+/**
  * NPSP validation rules reject a Contact with an email or mobile phone but
  * no preferred email / phone picklist value.
  */
@@ -810,30 +881,48 @@ export async function submitUpdateRecurring(input: {
       );
     }
 
-    const installmentPeriod = FREQUENCY_TO_INSTALLMENT[input.frequency];
+    try {
+      const installmentPeriod = FREQUENCY_TO_INSTALLMENT[input.frequency];
 
-    const updatePayload: { Id: string; [key: string]: unknown } = {
-      Id: safeId,
-      [map.recurring.amount]: input.amount,
-      npsp__Status__c: "Active", // Always activate
-    };
+      const updatePayload: { Id: string; [key: string]: unknown } = {
+        Id: safeId,
+        [map.recurring.amount]: input.amount,
+        npsp__Status__c: "Active", // Always activate
+      };
 
-    if (installmentPeriod) {
-      updatePayload["npe03__Installment_Period__c"] = installmentPeriod;
-    }
+      if (installmentPeriod) {
+        updatePayload["npe03__Installment_Period__c"] = installmentPeriod;
+      }
 
-    if (paymentMethodId) {
-      updatePayload[map.recurring.paymentMethod] = paymentMethodId;
-    }
+      if (paymentMethodId) {
+        updatePayload[map.recurring.paymentMethod] = paymentMethodId;
+      }
 
-    const updateResult = await conn
-      .sobject(map.recurring.sobject)
-      .update(updatePayload);
+      if (record.recurringStatus !== "Active") {
+        const reactivationFields = await existingRecurringFields(conn, [
+          ...Object.keys(REACTIVATION_DEFAULTS.fields),
+          REACTIVATION_DEFAULTS.dateField,
+        ]);
+        for (const field of reactivationFields) {
+          updatePayload[field] =
+            field === REACTIVATION_DEFAULTS.dateField
+              ? orgToday().iso
+              : REACTIVATION_DEFAULTS.fields[field];
+        }
+      }
 
-    if (!updateResult.success) {
-      throw new FlowRequestError(
-        formatSaveFailure(updateResult, "No se pudo reactivar la donación"),
-      );
+      const updateResult = await conn
+        .sobject(map.recurring.sobject)
+        .update(updatePayload);
+
+      if (!updateResult.success) {
+        throw new FlowRequestError(
+          formatSaveFailure(updateResult, "No se pudo reactivar la donación"),
+        );
+      }
+    } catch (error) {
+      await discardCreated(conn, "TCPagos__Payment_Method__c", [paymentMethodId]);
+      throw error;
     }
 
     return { recurringDonationId: safeId, paymentMethodId };
@@ -1010,32 +1099,45 @@ export async function submitConvertToRecurring(input: {
       ...ALTA_RECURRING_DEFAULTS.fields,
     };
 
-    const rdResult = await conn.sobject(map.recurring.sobject).create(rdPayload);
+    const currency = await opportunityCurrency(conn, safeOppId);
+    if (currency) rdPayload.CurrencyIsoCode = currency;
 
-    if (!rdResult.success || !rdResult.id) {
-      throw new FlowRequestError(
-        formatSaveFailure(rdResult, "No se pudo crear la donación recurrente"),
-      );
-    }
+    let recurringDonationId: string | null = null;
+    try {
+      const rdResult = await conn
+        .sobject(map.recurring.sobject)
+        .create(rdPayload);
 
-    // Link RD to Opportunity and update payment method
-    const oppUpdateResult = await conn.sobject("Opportunity").update({
-      Id: safeOppId,
-      [map.opportunity.recurringLookup]: rdResult.id,
-      [map.opportunity.paymentMethod]: paymentMethodId,
-    });
+      if (!rdResult.success || !rdResult.id) {
+        throw new FlowRequestError(
+          formatSaveFailure(rdResult, "No se pudo crear la donación recurrente"),
+        );
+      }
+      recurringDonationId = rdResult.id;
 
-    if (!oppUpdateResult.success) {
-      throw new FlowRequestError(
-        formatSaveFailure(
-          oppUpdateResult,
-          "No se pudo vincular la donación recurrente a la oportunidad",
-        ),
-      );
+      // Link RD to Opportunity and update payment method
+      const oppUpdateResult = await conn.sobject("Opportunity").update({
+        Id: safeOppId,
+        [map.opportunity.recurringLookup]: recurringDonationId,
+        [map.opportunity.paymentMethod]: paymentMethodId,
+      });
+
+      if (!oppUpdateResult.success) {
+        throw new FlowRequestError(
+          formatSaveFailure(
+            oppUpdateResult,
+            "No se pudo vincular la donación recurrente a la oportunidad",
+          ),
+        );
+      }
+    } catch (error) {
+      await discardCreated(conn, map.recurring.sobject, [recurringDonationId]);
+      await discardCreated(conn, "TCPagos__Payment_Method__c", [paymentMethodId]);
+      throw error;
     }
 
     return {
-      recurringDonationId: rdResult.id,
+      recurringDonationId,
       paymentMethodId,
     };
   });
@@ -1217,17 +1319,22 @@ export async function submitAbandonedCart(input: {
       Contacto__c: contactId,
     };
 
-    const updateResult = await conn
-      .sobject("TCPagos__Formulario_TC__c")
-      .update(updatePayload);
+    try {
+      const updateResult = await conn
+        .sobject("TCPagos__Formulario_TC__c")
+        .update(updatePayload);
 
-    if (!updateResult.success) {
-      throw new FlowRequestError(
-        formatSaveFailure(
-          updateResult,
-          "No se pudo actualizar el formulario",
-        ),
-      );
+      if (!updateResult.success) {
+        throw new FlowRequestError(
+          formatSaveFailure(
+            updateResult,
+            "No se pudo actualizar el formulario",
+          ),
+        );
+      }
+    } catch (error) {
+      await discardCreated(conn, "TCPagos__Payment_Method__c", [paymentMethodSfId]);
+      throw error;
     }
 
     return {

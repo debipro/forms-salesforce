@@ -63,8 +63,30 @@ Los tres terminan con un pie con el correo de contacto.
 | Formulario | Qué escribe |
 |---|---|
 | Reactivá tu donación | Actualiza la Recurring Donation: `npsp__Status__c = Active`, el monto y la frecuencia. Si el donante cargó tarjeta o CBU, crea un `TCPagos__Payment_Method__c` y lo vincula. |
-| Sumate todos los meses | Crea un `TCPagos__Payment_Method__c` y una Recurring Donation mensual nueva para el Contact. Vincula las dos a la Opportunity. |
+| Sumate todos los meses | Crea un `TCPagos__Payment_Method__c` y una Recurring Donation mensual nueva para el Contact, en la misma moneda que la Opportunity. Vincula las dos a la Opportunity. |
 | Completá tu donación | Busca o crea el Contact (por `Contacto__c` o por email), crea el `TCPagos__Payment_Method__c` y actualiza el formulario con monto, frecuencia, método de pago y contacto. El Flow de Salesforce del paquete crea el resto. |
+
+Si el guardado falla después de crear el método de pago (por ejemplo, por
+una regla de validación), el formulario borra lo que creó en ese intento
+y muestra el error de Salesforce. El error también queda en el log del
+servidor como `[gestion-donacion] submit failed`.
+
+#### Campos de reactivación
+
+Cuando la Recurring Donation no estaba `Active`, **Reactivá tu donación**
+también completa estos campos, que las reglas de validación exigen para
+pasar de `Closed` a `Active`:
+
+| Campo | Valor |
+|---|---|
+| `Tipo_de_reactivacion__c` | `Recupero` |
+| `Sede_que_reactiva__c` | `Oficina Nacional` |
+| `Fecha_de_la_reactivaci_n__c` | La fecha del envío (hora de Argentina) |
+
+Los valores están en `REACTIVATION_DEFAULTS`, en
+`server/utils/salesforce.ts`. Si tu org no tiene alguno de esos campos,
+el formulario lo omite. Si los tiene con otros valores de picklist,
+cambialos ahí.
 
 ---
 
@@ -151,6 +173,7 @@ Abrir cada link, completar el formulario y verificar en Salesforce:
 - [ ] La página saluda con el nombre del Contact.
 - [ ] Al enviar sin método de pago, aparece el mensaje de éxito.
 - [ ] La Recurring Donation quedó en `Active` con el monto elegido.
+- [ ] Si estaba `Closed`: tiene Tipo de reactivación `Recupero`, Sede `Oficina Nacional` y la fecha de hoy.
 - [ ] La frecuencia no cambió.
 - [ ] Repetir cargando tarjeta o CBU: hay un `TCPagos__Payment_Method__c` nuevo vinculado a la Recurring Donation.
 
