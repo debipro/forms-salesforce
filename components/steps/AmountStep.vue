@@ -51,6 +51,7 @@ const props = withDefaults(
     /** `"buttons"` (chips) or `"select"` (dropdown) — see component docs. */
     mode?: PresetMode;
     frequencies?: ReadonlyArray<FrequencyOption>;
+    frequencyLabel?: string;
     minAmount?: number;
     disabled?: boolean;
     customLabel?: string;
@@ -66,6 +67,7 @@ const props = withDefaults(
       { value: "Mensual", label: "Todos los meses" },
       { value: "Única vez", label: "Por única vez" },
     ],
+    frequencyLabel: "Quiero donar",
     minAmount: 1,
     disabled: false,
     customLabel: "Otro monto",
@@ -228,7 +230,7 @@ defineExpose({ validate });
     <FieldSelect
       v-if="showFrequency"
       :model-value="modelValue.frequency"
-      label="Quiero donar"
+      :label="frequencyLabel"
       :options="frequencyOptions"
       required
       :disabled="disabled"

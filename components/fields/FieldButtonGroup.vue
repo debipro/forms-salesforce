@@ -48,6 +48,7 @@ function isSelected(
 <template>
   <div class="flex flex-col gap-2">
     <span
+      v-if="label"
       class="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
     >
       {{ label }}
