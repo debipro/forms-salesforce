@@ -60,18 +60,55 @@ type Flow = {
   needsParam: boolean;
 };
 
+/**
+ * The gestión page is one route with three modes. Each mode takes a
+ * different Salesforce Id, so the landing lists them separately with the
+ * link to paste in the email or the button.
+ */
+const GESTION_MODES: Flow[] = [
+  {
+    path: "/flow/gestion-donacion/:id?mode=update-recurring",
+    url: "/flow/gestion-donacion/<id>?mode=update-recurring",
+    title: "Reactivá tu donación",
+    description:
+      "Donación mensual cerrada o inactiva. En el link, <id> es el Id de la Recurring Donation (npe03__Recurring_Donation__c).",
+    needsParam: true,
+  },
+  {
+    path: "/flow/gestion-donacion/:id?mode=convert-to-recurring",
+    url: "/flow/gestion-donacion/<id>?mode=convert-to-recurring",
+    title: "Sumate todos los meses",
+    description:
+      "Pasa una donación única a mensual. En el link, <id> es el Id de la Opportunity.",
+    needsParam: true,
+  },
+  {
+    path: "/flow/gestion-donacion/:id?mode=abandoned-cart",
+    url: "/flow/gestion-donacion/<id>?mode=abandoned-cart",
+    title: "Completá tu donación",
+    description:
+      "Formulario que quedó a mitad de camino. En el link, <id> es el Id de TCPagos__Formulario_TC__c.",
+    needsParam: true,
+  },
+];
+
 const router = useRouter();
 const flows = computed<Flow[]>(() => {
-  return router
+  const routes = router
     .getRoutes()
-    .filter((r) => r.path.startsWith("/flow/") && r.path !== "/flow")
+    .filter((r) => r.path.startsWith("/flow/") && r.path !== "/flow");
+
+  const hasGestion = routes.some((r) =>
+    r.path.startsWith("/flow/gestion-donacion"),
+  );
+
+  const regular = routes
+    .filter((r) => !r.path.startsWith("/flow/gestion-donacion"))
     .map((r) => {
       const needsParam = r.path.includes(":");
       // Replace `:oppId` etc. with a placeholder so the URL string in the
       // UI is copy-pasteable; the actual link target uses the original.
-      const url = needsParam
-        ? r.path.replace(/:(\w+)/g, "<$1>")
-        : r.path;
+      const url = needsParam ? r.path.replace(/:(\w+)/g, "<$1>") : r.path;
       const meta = r.meta as {
         flowTitle?: string;
         flowDescription?: string;
@@ -92,7 +129,9 @@ const flows = computed<Flow[]>(() => {
         needsParam,
       };
     })
-    .sort((a, b) => a.title.localeCompare(b.title));
+    .sort((a, b) => a.title.localeCompare(b.title, "es"));
+
+  return hasGestion ? [...regular, ...GESTION_MODES] : regular;
 });
 
 const TESTED_STORAGE_KEY = "debi-forms.onboarding.flowsTested";
@@ -148,9 +187,13 @@ function renderMarkdown(md: string): string {
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;");
 
+  // The README is saved with Windows newlines. The patterns below
+  // match on `\n`, so normalize before anything else.
+  let s = md.replace(/\r\n/g, "\n");
+
   // Stash fenced code blocks first so inline markdown doesn't touch them.
   const codeBlocks: string[] = [];
-  let s = md.replace(
+  s = s.replace(
     /```(\w+)?\n([\s\S]*?)```/g,
     (_, _lang: string, code: string) => {
       const idx = codeBlocks.length;
@@ -160,6 +203,16 @@ function renderMarkdown(md: string): string {
       return `\u0000CODE${idx}\u0000`;
     },
   );
+
+  // Pull autolinks out before escaping, so `<https://…>` stays a link
+  // and every other `<…>` (like `<id>` or `<script setup>`) is shown as text.
+  const autolinks: string[] = [];
+  s = s.replace(/<(https?:\/\/[^>\s]+)>/g, (_, url: string) => {
+    const i = autolinks.length;
+    autolinks.push(url);
+    return `\u0000LINK${i}\u0000`;
+  });
+  s = escapeHtml(s);
 
   // Inline span replacements: bold, italic, code, links, autolinks.
   const inline = (line: string): string =>
@@ -171,10 +224,10 @@ function renderMarkdown(md: string): string {
         /\[([^\]]+)\]\(([^)]+)\)/g,
         '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
       )
-      .replace(
-        /<(https?:\/\/[^>]+)>/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
-      );
+      .replace(/\u0000LINK(\d+)\u0000/g, (_, i: string) => {
+        const url = escapeHtml(autolinks[+i] ?? "");
+        return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+      });
 
   // Tables. Detect a header row + separator + body rows.
   s = s.replace(
@@ -202,12 +255,12 @@ function renderMarkdown(md: string): string {
   );
 
   // Headings.
-  s = s.replace(/^###### (.+)$/gm, "<h6>$1</h6>");
-  s = s.replace(/^##### (.+)$/gm, "<h5>$1</h5>");
-  s = s.replace(/^#### (.+)$/gm, "<h4>$1</h4>");
-  s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-  s = s.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-  s = s.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  s = s.replace(/^###### (.+)$/gm, (_, t: string) => `<h6>${inline(t)}</h6>`);
+  s = s.replace(/^##### (.+)$/gm, (_, t: string) => `<h5>${inline(t)}</h5>`);
+  s = s.replace(/^#### (.+)$/gm, (_, t: string) => `<h4>${inline(t)}</h4>`);
+  s = s.replace(/^### (.+)$/gm, (_, t: string) => `<h3>${inline(t)}</h3>`);
+  s = s.replace(/^## (.+)$/gm, (_, t: string) => `<h2>${inline(t)}</h2>`);
+  s = s.replace(/^# (.+)$/gm, (_, t: string) => `<h1>${inline(t)}</h1>`);
 
   // Horizontal rule.
   s = s.replace(/^---+$/gm, "<hr>");
@@ -443,7 +496,7 @@ const totalSteps = 3;
                 {{ flow.description }}
               </p>
               <p
-                class="truncate font-mono text-[11px] text-muted-foreground/80"
+                class="break-all font-mono text-[11px] text-muted-foreground/80"
                 :title="flow.url"
               >
                 {{ flow.url }}

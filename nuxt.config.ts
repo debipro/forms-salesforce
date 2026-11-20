@@ -26,8 +26,14 @@ export default defineNuxtConfig({
     sfRefreshToken: process.env.SF_REFRESH_TOKEN,
     sfLoginUrl: process.env.SF_LOGIN_URL,
     debiSecretKey: process.env.DEBI_SECRET_KEY,
+    // Optional: Salesforce Connector key for abandoned-cart mode (fs_live_* or fs_test_*)
+    sfConnectorKey: process.env.SF_CONNECTOR_KEY,
     public: {
       debiPublicKey: process.env.DEBI_PUBLIC_KEY,
+      // Public on purpose: donors see these in the form copy.
+      // Set them in Vercel and redeploy to change them.
+      orgContactEmail: process.env.ORG_CONTACT_EMAIL || "",
+      orgName: process.env.ORG_NAME || "",
     },
   },
 

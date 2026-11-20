@@ -559,6 +559,77 @@ const ALTA_RECURRING_DEFAULTS = {
 };
 
 /**
+ * Written when a closed Recurring Donation goes back to Active. The org's
+ * validation rules require a reactivation type, plus date and office for
+ * Argentina. Fields missing from the org are skipped (see
+ * `existingRecurringFields`), so orgs without them keep working.
+ */
+const REACTIVATION_DEFAULTS = {
+  fields: {
+    Tipo_de_reactivacion__c: "Recupero",
+    Sede_que_reactiva__c: "Oficina Nacional",
+  } as Record<string, string>,
+  dateField: "Fecha_de_la_reactivaci_n__c",
+};
+
+/**
+ * In multi-currency orgs Salesforce rejects linking an Opportunity to a
+ * Recurring Donation in a different currency, and a new RD otherwise gets
+ * the integration user's default currency. Single-currency orgs have no
+ * `CurrencyIsoCode` field, so the query fails and we return null.
+ */
+async function opportunityCurrency(
+  conn: Connection,
+  oppId: string,
+): Promise<string | null> {
+  try {
+    const result = await conn.query<{ CurrencyIsoCode?: string }>(
+      `SELECT CurrencyIsoCode FROM Opportunity WHERE Id = '${escapeSoql(oppId)}' LIMIT 1`,
+    );
+    return result.records[0]?.CurrencyIsoCode ?? null;
+  } catch {
+    return null;
+  }
+}
+
+let recurringFieldNames: Set<string> | null = null;
+
+async function existingRecurringFields(
+  conn: Connection,
+  names: string[],
+): Promise<string[]> {
+  if (!recurringFieldNames) {
+    const described = await conn.sobject(FIELD_MAP.recurring.sobject).describe();
+    recurringFieldNames = new Set(described.fields.map((f) => f.name));
+  }
+  return names.filter((name) => recurringFieldNames!.has(name));
+}
+
+/**
+ * Removes records created earlier in a submit that failed later, so a
+ * failed attempt doesn't leave a Payment Method (or RD) with nothing
+ * pointing at it. Failures are logged, not thrown: the original error is
+ * the one the donor needs to see.
+ */
+async function discardCreated(
+  conn: Connection,
+  sobject: string,
+  ids: Array<string | null | undefined>,
+): Promise<void> {
+  const toDelete = ids.filter((id): id is string => Boolean(id));
+  if (toDelete.length === 0) return;
+  try {
+    await conn.sobject(sobject).destroy(toDelete);
+  } catch (error) {
+    console.error("[salesforce] cleanup after failed submit failed", {
+      sobject,
+      ids: toDelete,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+}
+
+/**
  * NPSP validation rules reject a Contact with an email or mobile phone but
  * no preferred email / phone picklist value.
  */
@@ -682,6 +753,596 @@ async function findOpportunityRecordTypeId(
     `SELECT Id FROM RecordType WHERE SobjectType = 'Opportunity' AND DeveloperName = '${escapeSoql(developerName)}' AND IsActive = true LIMIT 1`,
   );
   return result.records[0]?.Id ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Gestión de donación: Three modes with different entry points
+// ---------------------------------------------------------------------------
+
+/**
+ * Frequency map: UI labels to Salesforce Installment Period values.
+ */
+const FREQUENCY_TO_INSTALLMENT: Record<string, string> = {
+  Mensual: "Monthly",
+  Trimestral: "Quarterly",
+  Anual: "Yearly",
+};
+
+// ---------------------------------------------------------------------------
+// Mode 1: update-recurring — Reactivate an existing Recurring Donation
+// ---------------------------------------------------------------------------
+
+/**
+ * Record shape for update-recurring mode.
+ * Loads from npe03__Recurring_Donation__c with linked Contact.
+ */
+export type UpdateRecurringRecord = {
+  recurringDonationId: string;
+  recurringAmount: number | null;
+  recurringStatus: string | null;
+  recurringInstallmentPeriod: string | null;
+  recurringPaymentMethodId: string | null;
+  contactId: string | null;
+  contactFirstName: string | null;
+  contactLastName: string | null;
+  contactEmail: string | null;
+};
+
+/**
+ * Load a Recurring Donation for the update-recurring mode.
+ * Pre-fills form and personalizes greeting with contact name.
+ */
+export async function getUpdateRecurringRecord(
+  rdId: string,
+): Promise<UpdateRecurringRecord> {
+  return withSalesforceConnection(async (conn) => {
+    const safeId = escapeSoql(sanitizeOppId(rdId));
+    const map = FIELD_MAP;
+
+    const rdQuery = `
+      SELECT 
+        Id,
+        ${map.recurring.amount},
+        ${map.recurring.paymentMethod},
+        npe03__Installment_Period__c,
+        npsp__Status__c,
+        npe03__Contact__c,
+        npe03__Contact__r.FirstName,
+        npe03__Contact__r.LastName,
+        npe03__Contact__r.Email
+      FROM ${map.recurring.sobject}
+      WHERE Id = '${safeId}'
+      LIMIT 1
+    `;
+
+    const result = await conn.query<Record<string, unknown>>(rdQuery);
+    const rd = result.records[0];
+
+    if (!rd) {
+      throw new FlowRequestError("No se encontró la donación recurrente", 404);
+    }
+
+    const contact = rd["npe03__Contact__r"] as Record<string, unknown> | null;
+
+    return {
+      recurringDonationId: rd.Id as string,
+      recurringAmount: (rd[map.recurring.amount] as number) ?? null,
+      recurringStatus: (rd["npsp__Status__c"] as string) ?? null,
+      recurringInstallmentPeriod:
+        (rd["npe03__Installment_Period__c"] as string) ?? null,
+      recurringPaymentMethodId:
+        (rd[map.recurring.paymentMethod] as string) ?? null,
+      contactId: (rd["npe03__Contact__c"] as string) ?? null,
+      contactFirstName: (contact?.FirstName as string) ?? null,
+      contactLastName: (contact?.LastName as string) ?? null,
+      contactEmail: (contact?.Email as string) ?? null,
+    };
+  });
+}
+
+/**
+ * Reactivate an existing Recurring Donation.
+ * Sets status to Active and optionally updates amount, frequency, payment method.
+ */
+export async function submitUpdateRecurring(input: {
+  rdId: string;
+  amount: number;
+  frequency: string;
+  paymentMethodToken?: DebiPaymentToken;
+  record?: UpdateRecurringRecord;
+}): Promise<{
+  recurringDonationId: string;
+  paymentMethodId: string | null;
+}> {
+  return withSalesforceConnection(async (conn) => {
+    const safeId = sanitizeOppId(input.rdId);
+    const map = FIELD_MAP;
+
+    let record = input.record;
+    if (!record) {
+      record = await getUpdateRecurringRecord(safeId);
+    }
+
+    const contactId = record.contactId?.trim() ?? "";
+    let paymentMethodId: string | null = null;
+
+    // Create new payment method if token provided
+    if (input.paymentMethodToken) {
+      if (!contactId || !SF_CONTACT_ID.test(contactId)) {
+        throw new FlowRequestError(
+          "La donación recurrente no tiene un contacto vinculado.",
+          400,
+        );
+      }
+      paymentMethodId = await createPaymentMethod(
+        conn,
+        input.paymentMethodToken,
+        contactId,
+      );
+    }
+
+    try {
+      const installmentPeriod = FREQUENCY_TO_INSTALLMENT[input.frequency];
+
+      const updatePayload: { Id: string; [key: string]: unknown } = {
+        Id: safeId,
+        [map.recurring.amount]: input.amount,
+        npsp__Status__c: "Active", // Always activate
+      };
+
+      if (installmentPeriod) {
+        updatePayload["npe03__Installment_Period__c"] = installmentPeriod;
+      }
+
+      if (paymentMethodId) {
+        updatePayload[map.recurring.paymentMethod] = paymentMethodId;
+      }
+
+      if (record.recurringStatus !== "Active") {
+        const reactivationFields = await existingRecurringFields(conn, [
+          ...Object.keys(REACTIVATION_DEFAULTS.fields),
+          REACTIVATION_DEFAULTS.dateField,
+        ]);
+        for (const field of reactivationFields) {
+          updatePayload[field] =
+            field === REACTIVATION_DEFAULTS.dateField
+              ? orgToday().iso
+              : REACTIVATION_DEFAULTS.fields[field];
+        }
+      }
+
+      const updateResult = await conn
+        .sobject(map.recurring.sobject)
+        .update(updatePayload);
+
+      if (!updateResult.success) {
+        throw new FlowRequestError(
+          formatSaveFailure(updateResult, "No se pudo reactivar la donación"),
+        );
+      }
+    } catch (error) {
+      await discardCreated(conn, "TCPagos__Payment_Method__c", [paymentMethodId]);
+      throw error;
+    }
+
+    return { recurringDonationId: safeId, paymentMethodId };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mode 2: convert-to-recurring — Create RD from an existing Opportunity
+// ---------------------------------------------------------------------------
+
+/**
+ * Record shape for convert-to-recurring mode.
+ * Loads from Opportunity with linked Contact.
+ */
+export type ConvertToRecurringRecord = {
+  opportunityId: string;
+  opportunityName: string | null;
+  opportunityAmount: number | null;
+  contactId: string | null;
+  contactFirstName: string | null;
+  contactLastName: string | null;
+  contactEmail: string | null;
+  /** If already has a recurring donation linked, show it */
+  existingRecurringId: string | null;
+};
+
+/**
+ * Load an Opportunity for the convert-to-recurring mode.
+ */
+export async function getConvertToRecurringRecord(
+  oppId: string,
+): Promise<ConvertToRecurringRecord> {
+  return withSalesforceConnection(async (conn) => {
+    const safeId = escapeSoql(sanitizeOppId(oppId));
+    const map = FIELD_MAP;
+
+    // Try with npsp__Primary_Contact__c first, fallback to ContactId
+    const baseFields = `
+      Id, Name, ${map.opportunity.amount}, ContactId,
+      ${map.opportunity.recurringLookup}
+    `;
+
+    let opp: Record<string, unknown> | undefined;
+    let hasNpspContact = false;
+
+    try {
+      const result = await conn.query<Record<string, unknown>>(`
+        SELECT ${baseFields}, npsp__Primary_Contact__c,
+               npsp__Primary_Contact__r.FirstName,
+               npsp__Primary_Contact__r.LastName,
+               npsp__Primary_Contact__r.Email
+        FROM Opportunity
+        WHERE Id = '${safeId}'
+        LIMIT 1
+      `);
+      opp = result.records[0];
+      hasNpspContact = true;
+    } catch {
+      // Fallback without NPSP fields
+      const result = await conn.query<Record<string, unknown>>(`
+        SELECT ${baseFields}
+        FROM Opportunity
+        WHERE Id = '${safeId}'
+        LIMIT 1
+      `);
+      opp = result.records[0];
+    }
+
+    if (!opp) {
+      throw new FlowRequestError("No se encontró la oportunidad", 404);
+    }
+
+    // Get contact info
+    let contactId =
+      (opp["npsp__Primary_Contact__c"] as string) ||
+      (opp["ContactId"] as string) ||
+      null;
+    let contactFirstName: string | null = null;
+    let contactLastName: string | null = null;
+    let contactEmail: string | null = null;
+
+    if (hasNpspContact && opp["npsp__Primary_Contact__r"]) {
+      const c = opp["npsp__Primary_Contact__r"] as Record<string, unknown>;
+      contactFirstName = (c.FirstName as string) ?? null;
+      contactLastName = (c.LastName as string) ?? null;
+      contactEmail = (c.Email as string) ?? null;
+    } else if (contactId) {
+      // Fetch contact separately
+      const contactResult = await conn.query<Record<string, unknown>>(`
+        SELECT FirstName, LastName, Email
+        FROM Contact
+        WHERE Id = '${escapeSoql(contactId)}'
+        LIMIT 1
+      `);
+      const c = contactResult.records[0];
+      if (c) {
+        contactFirstName = (c.FirstName as string) ?? null;
+        contactLastName = (c.LastName as string) ?? null;
+        contactEmail = (c.Email as string) ?? null;
+      }
+    }
+
+    return {
+      opportunityId: opp.Id as string,
+      opportunityName: (opp.Name as string) ?? null,
+      opportunityAmount: (opp[map.opportunity.amount] as number) ?? null,
+      contactId,
+      contactFirstName,
+      contactLastName,
+      contactEmail,
+      existingRecurringId:
+        (opp[map.opportunity.recurringLookup] as string) ?? null,
+    };
+  });
+}
+
+/**
+ * Convert a one-time Opportunity to recurring.
+ * Creates a new Recurring Donation and Payment Method, links to Opp.
+ */
+export async function submitConvertToRecurring(input: {
+  oppId: string;
+  amount: number;
+  frequency: string;
+  paymentMethodToken: DebiPaymentToken;
+  record?: ConvertToRecurringRecord;
+}): Promise<{
+  recurringDonationId: string;
+  paymentMethodId: string;
+}> {
+  return withSalesforceConnection(async (conn) => {
+    const safeOppId = sanitizeOppId(input.oppId);
+    const map = FIELD_MAP;
+
+    let record = input.record;
+    if (!record) {
+      record = await getConvertToRecurringRecord(safeOppId);
+    }
+
+    const contactId = record.contactId?.trim() ?? "";
+    if (!contactId || !SF_CONTACT_ID.test(contactId)) {
+      throw new FlowRequestError(
+        "La oportunidad no tiene un contacto vinculado.",
+        400,
+      );
+    }
+
+    // Check if already has a recurring donation
+    if (record.existingRecurringId) {
+      throw new FlowRequestError(
+        "Esta oportunidad ya tiene una donación recurrente vinculada.",
+        400,
+      );
+    }
+
+    // Create payment method
+    const paymentMethodId = await createPaymentMethod(
+      conn,
+      input.paymentMethodToken,
+      contactId,
+    );
+
+    // Create recurring donation
+    const installmentPeriod =
+      FREQUENCY_TO_INSTALLMENT[input.frequency] || "Monthly";
+
+    const rdPayload: Record<string, unknown> = {
+      Name: `RD ${contactId} ${todayPlusDays(0)}`,
+      npe03__Contact__c: contactId,
+      [map.recurring.amount]: input.amount,
+      [map.recurring.paymentMethod]: paymentMethodId,
+      npe03__Installment_Period__c: installmentPeriod,
+      npe03__Date_Established__c: todayPlusDays(0),
+      ...ALTA_RECURRING_DEFAULTS.fields,
+    };
+
+    const currency = await opportunityCurrency(conn, safeOppId);
+    if (currency) rdPayload.CurrencyIsoCode = currency;
+
+    let recurringDonationId: string | null = null;
+    try {
+      const rdResult = await conn
+        .sobject(map.recurring.sobject)
+        .create(rdPayload);
+
+      if (!rdResult.success || !rdResult.id) {
+        throw new FlowRequestError(
+          formatSaveFailure(rdResult, "No se pudo crear la donación recurrente"),
+        );
+      }
+      recurringDonationId = rdResult.id;
+
+      // Link RD to Opportunity and update payment method
+      const oppUpdateResult = await conn.sobject("Opportunity").update({
+        Id: safeOppId,
+        [map.opportunity.recurringLookup]: recurringDonationId,
+        [map.opportunity.paymentMethod]: paymentMethodId,
+      });
+
+      if (!oppUpdateResult.success) {
+        throw new FlowRequestError(
+          formatSaveFailure(
+            oppUpdateResult,
+            "No se pudo vincular la donación recurrente a la oportunidad",
+          ),
+        );
+      }
+    } catch (error) {
+      await discardCreated(conn, map.recurring.sobject, [recurringDonationId]);
+      await discardCreated(conn, "TCPagos__Payment_Method__c", [paymentMethodId]);
+      throw error;
+    }
+
+    return {
+      recurringDonationId,
+      paymentMethodId,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mode 3: abandoned-cart — Complete a TCPagos__Formulario_TC__c
+// ---------------------------------------------------------------------------
+
+/**
+ * Record shape for abandoned-cart mode.
+ * Loads from TCPagos__Formulario_TC__c.
+ */
+export type AbandonedCartRecord = {
+  formularioId: string;
+  nombre: string | null;
+  apellido: string | null;
+  email: string | null;
+  telefono: string | null;
+  monto: number | null;
+  frecuencia: string | null;
+  dni: string | null;
+  fechaNacimiento: string | null;
+  /** Whether the form already has a payment method */
+  hasPaymentMethod: boolean;
+};
+
+/**
+ * Load a TCPagos__Formulario_TC__c for the abandoned-cart mode.
+ * Queries only the standard fields that exist in the managed package.
+ */
+export async function getAbandonedCartRecord(
+  formId: string,
+): Promise<AbandonedCartRecord> {
+  return withSalesforceConnection(async (conn) => {
+    const safeId = escapeSoql(sanitizeOppId(formId));
+
+    // Query only the core fields from the managed package
+    const result = await conn.query<Record<string, unknown>>(`
+      SELECT 
+        Id,
+        TCPagos__Nombre__c,
+        TCPagos__Apellido__c,
+        TCPagos__Correo_electr_nico__c,
+        TCPagos__Tel_fono__c,
+        TCPagos__Monto_de_la_donaci_n__c,
+        TCPagos__Frecuencia_de_la_donaci_n__c,
+        TCPagos__N_mero_de_identificaci_n__c,
+        TCPagos__Fecha_de_nacimiento__c
+      FROM TCPagos__Formulario_TC__c
+      WHERE Id = '${safeId}'
+      LIMIT 1
+    `);
+
+    const form = result.records[0];
+    if (!form) {
+      throw new FlowRequestError("No se encontró el formulario", 404);
+    }
+
+    return {
+      formularioId: form.Id as string,
+      nombre: (form["TCPagos__Nombre__c"] as string) ?? null,
+      apellido: (form["TCPagos__Apellido__c"] as string) ?? null,
+      email: (form["TCPagos__Correo_electr_nico__c"] as string) ?? null,
+      telefono: (form["TCPagos__Tel_fono__c"] as string) ?? null,
+      monto: (form["TCPagos__Monto_de_la_donaci_n__c"] as number) ?? null,
+      frecuencia:
+        (form["TCPagos__Frecuencia_de_la_donaci_n__c"] as string) ?? null,
+      dni: (form["TCPagos__N_mero_de_identificaci_n__c"] as string) ?? null,
+      fechaNacimiento:
+        (form["TCPagos__Fecha_de_nacimiento__c"] as string) ?? null,
+      hasPaymentMethod: false, // Will be set by the submit via Debi API
+    };
+  });
+}
+
+/**
+ * Complete an abandoned cart by:
+ * 1. Finding or creating a Contact (from Contacto__c or by email)
+ * 2. Creating a TCPagos__Payment_Method__c linked to the Contact
+ * 3. Updating TCPagos__Formulario_TC__c with the payment method and other data
+ *
+ * The Salesforce Flow will then trigger and create RD, Opportunity, etc.
+ */
+export async function submitAbandonedCart(input: {
+  formId: string;
+  amount: number;
+  frequency: string;
+  paymentMethodToken: DebiPaymentToken;
+  /** Pre-loaded record to get contact info */
+  record?: AbandonedCartRecord;
+}): Promise<{
+  formularioId: string;
+  paymentMethodId: string;
+  contactId: string;
+}> {
+  return withSalesforceConnection(async (conn) => {
+    const safeId = sanitizeOppId(input.formId);
+
+    // First, get the form to find or create the contact
+    const formResult = await conn.query<Record<string, unknown>>(`
+      SELECT 
+        Id,
+        Contacto__c,
+        TCPagos__Nombre__c,
+        TCPagos__Apellido__c,
+        TCPagos__Correo_electr_nico__c,
+        TCPagos__Tel_fono__c
+      FROM TCPagos__Formulario_TC__c
+      WHERE Id = '${escapeSoql(safeId)}'
+      LIMIT 1
+    `);
+
+    const form = formResult.records[0];
+    if (!form) {
+      throw new FlowRequestError("No se encontró el formulario", 404);
+    }
+
+    // Get or create contact
+    let contactId = form["Contacto__c"] as string | null;
+
+    if (!contactId) {
+      // Try to find contact by email or create one
+      const email = form["TCPagos__Correo_electr_nico__c"] as string;
+      if (!email) {
+        throw new FlowRequestError(
+          "El formulario no tiene email para crear el contacto",
+          400,
+        );
+      }
+
+      // Search for existing contact
+      const existingContact = await conn.query<{ Id: string }>(`
+        SELECT Id FROM Contact 
+        WHERE Email = '${escapeSoql(email)}' 
+        LIMIT 1
+      `);
+
+      if (existingContact.records[0]) {
+        contactId = existingContact.records[0].Id;
+      } else {
+        // Create new contact
+        const firstName = form["TCPagos__Nombre__c"] as string || "";
+        const lastName = form["TCPagos__Apellido__c"] as string || "Sin Apellido";
+        const phone = form["TCPagos__Tel_fono__c"] as string || "";
+
+        const contactResult = await conn.sobject("Contact").create({
+          FirstName: firstName,
+          LastName: lastName,
+          Email: email,
+          MobilePhone: phone,
+          ...contactPreferenceFields(email, phone),
+        });
+
+        if (!contactResult.success || !contactResult.id) {
+          throw new FlowRequestError(
+            formatSaveFailure(contactResult, "No se pudo crear el contacto"),
+          );
+        }
+        contactId = contactResult.id;
+      }
+    }
+
+    // Create the Payment Method linked to the contact
+    const paymentMethodSfId = await createPaymentMethod(
+      conn,
+      input.paymentMethodToken,
+      contactId,
+    );
+
+    // Update the form with all the data
+    const updatePayload: { Id: string; [key: string]: unknown } = {
+      Id: safeId,
+      TCPagos__Monto_de_la_donaci_n__c: input.amount,
+      TCPagos__Frecuencia_de_la_donaci_n__c: input.frequency,
+      TCPagos__ID_M_todo_de_pago__c: input.paymentMethodToken.id,
+      TCPagos__M_todo_de_pago__c: input.paymentMethodToken.type,
+      TCPagos__TC_Metodo_de_Pago__c: paymentMethodSfId,
+      Contacto__c: contactId,
+    };
+
+    try {
+      const updateResult = await conn
+        .sobject("TCPagos__Formulario_TC__c")
+        .update(updatePayload);
+
+      if (!updateResult.success) {
+        throw new FlowRequestError(
+          formatSaveFailure(
+            updateResult,
+            "No se pudo actualizar el formulario",
+          ),
+        );
+      }
+    } catch (error) {
+      await discardCreated(conn, "TCPagos__Payment_Method__c", [paymentMethodSfId]);
+      throw error;
+    }
+
+    return {
+      formularioId: safeId,
+      paymentMethodId: paymentMethodSfId,
+      contactId,
+    };
+  });
 }
 
 /**

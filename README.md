@@ -1,13 +1,17 @@
 # Formularios de donación · Debi + Salesforce
 
-Template **listo para deploy** de formularios de donación. Trae tres flujos
-funcionando contra Salesforce de fábrica:
+Template **listo para deploy** de formularios de donación. Trae el alta,
+el autoservicio y tres formularios de gestión, funcionando contra
+Salesforce de fábrica:
 
 | Flujo | URL | Para qué sirve |
 |---|---|---|
 | **Alta de donante** | `/flow/alta-donante` | Wizard de 2 pasos: datos del donante y, después, monto + tarjeta/CBU + DNI. |
 | **Alta de donante (alternativo)** | `/flow/alta-donante-alternativo` | Wizard de 3 pasos con monto-primero, mostrado en formato dropdown. Sirve como segundo ejemplo de qué tan distinto puede ser un flow. |
 | **Actualizar donación** (autoservicio) | `/flow/actualizar-donacion/<id-de-oportunidad>` | Link que la org manda por mail a un donante para que cambie monto y/o método de pago. |
+| **Reactivá tu donación** | `/flow/gestion-donacion/<id>?mode=update-recurring` | Reactiva una donación mensual cerrada. `<id>` es el Id de `npe03__Recurring_Donation__c`. |
+| **Sumate todos los meses** | `/flow/gestion-donacion/<id>?mode=convert-to-recurring` | Pasa una donación única a mensual. `<id>` es el Id de la Opportunity. |
+| **Completá tu donación** | `/flow/gestion-donacion/<id>?mode=abandoned-cart` | Retoma un formulario a mitad de camino. `<id>` es el Id de `TCPagos__Formulario_TC__c`. |
 
 > Los nombres de los flows son genéricos para que cualquier organización
 > pueda usarlos directamente. Personalizá el copy, colores y logo en cada
@@ -49,8 +53,9 @@ tenés cuenta en ambos, saltá al paso 4.
 
 ## 2) Variables de entorno
 
-Son **5 obligatorias** y no hay opcionales. Si te falta alguna, los
-formularios devuelven un error claro al primer submit.
+Son **5 obligatorias**. Si te falta alguna, los formularios devuelven
+un error claro al primer submit. Más abajo hay **2 opcionales** para
+cambiar el correo y el nombre de la organización sin tocar el código.
 
 | Variable | De dónde sale |
 |---|---|
@@ -87,6 +92,30 @@ Entrá a <https://debi.pro/dashboard/developers> y copiá:
 > backend (refunds, listado de cobros, etc.) no te pidan volver a tocar
 > la configuración.
 
+### Textos que se cambian en Vercel (opcional)
+
+Estas dos no hacen falta para que el sitio funcione. Sirven para
+personalizar los tres formularios de gestión sin editar el repositorio.
+Se cargan en **Vercel → Project → Settings → Environment Variables** y
+hacen efecto en el próximo deploy.
+
+| Variable | Dónde se ve | Si la dejás vacía |
+|---|---|---|
+| `ORG_CONTACT_EMAIL` | Pie de **Reactivá tu donación**, **Sumate todos los meses** y **Completá tu donación** («escribinos a …»). | La frase queda, sin dirección. |
+| `ORG_NAME` | Saludo de **Completá tu donación** («sumarte a …»). | La frase queda, sin el nombre de la organización. |
+
+Ejemplo:
+
+```
+ORG_CONTACT_EMAIL=socios@miorg.org
+ORG_NAME=TECHO
+```
+
+El resto de los textos (títulos, botones, montos) vive en
+`data/gestion-donacion-config.ts`. Ahí `{firstName}` se reemplaza con el
+nombre del contacto, `{contactEmail}` con `ORG_CONTACT_EMAIL` y
+`{orgName}` con `ORG_NAME`.
+
 ---
 
 ## 3) Probá los flujos (la "prueba de 5 minutos")
@@ -96,8 +125,9 @@ el repo sin abrir un solo archivo.
 
 ### Paso 1 — Listado de flows
 
-Abrí `https://<tu-url>.vercel.app/`. Tenés que ver 3 tarjetas con el
-nombre y descripción de cada flow. Tocá *"Alta de donante"*.
+Abrí `https://<tu-url>.vercel.app/`. Tenés que ver una tarjeta por flow,
+incluidas las tres de gestión de donación con el link de cada modo.
+Tocá *"Alta de donante"*.
 
 ### Paso 2 — Alta de donante (front)
 
@@ -165,15 +195,23 @@ reutilizables.
 pages/flow/
 ├── alta-donante.vue                                  ← Alta de 2 pasos
 ├── alta-donante-alternativo.vue                      ← Alta de 3 pasos (ejemplo)
-└── actualizar-donacion/
-    └── [oppId].vue                                   ← UI del autoservicio
+├── actualizar-donacion/
+│   └── [oppId].vue                                   ← UI del autoservicio
+└── gestion-donacion/
+    └── [id].vue                                      ← los 3 formularios de gestión
 
 server/api/flow/
 ├── alta-donante.post.ts                              ← backend del alta
 ├── alta-donante-alternativo.post.ts                  ← backend alternativo
-└── actualizar-donacion/
-    ├── [oppId].get.ts                                ← carga la oportunidad
-    └── [oppId].post.ts                               ← envía cambios
+├── actualizar-donacion/
+│   ├── [oppId].get.ts                                ← carga la oportunidad
+│   └── [oppId].post.ts                               ← envía cambios
+└── gestion-donacion/
+    ├── [id].get.ts                                   ← carga el registro según el modo
+    └── [id].post.ts                                  ← guarda según el modo
+
+data/
+└── gestion-donacion-config.ts                        ← config de textos por modo
 
 components/
 ├── PaymentMethodForm.vue                             ← elemento Debi (tokeniza)
@@ -401,6 +439,51 @@ en paralelo.
    - Si la Opportunity tenía una Recurring Donation linkeada, también
      la actualiza.
 
+### Gestión de donación (`gestion-donacion`)
+
+Una sola página, tres formularios. El link que se manda por mail cambia
+el `?mode=` y el tipo de Id que va en la URL.
+
+| Formulario | Link | Qué Id va en `<id>` |
+|---|---|---|
+| **Reactivá tu donación** | `/flow/gestion-donacion/<id>?mode=update-recurring` | `npe03__Recurring_Donation__c` (donación mensual cerrada o inactiva) |
+| **Sumate todos los meses** | `/flow/gestion-donacion/<id>?mode=convert-to-recurring` | `Opportunity` de una donación única |
+| **Completá tu donación** | `/flow/gestion-donacion/<id>?mode=abandoned-cart` | `TCPagos__Formulario_TC__c` (formulario a mitad de camino) |
+
+Ejemplos, reemplazando `<tu-url>` y el Id:
+
+```
+https://<tu-url>.vercel.app/flow/gestion-donacion/a0AXXXXXXXXXXXX?mode=update-recurring
+https://<tu-url>.vercel.app/flow/gestion-donacion/006XXXXXXXXXXXX?mode=convert-to-recurring
+https://<tu-url>.vercel.app/flow/gestion-donacion/a1BXXXXXXXXXXXX?mode=abandoned-cart
+```
+
+Qué hace cada uno:
+
+| Modo | Qué existe en Salesforce | Acción |
+|---|---|---|
+| `update-recurring` | Donación recurrente cerrada + Contact | La reactiva. El monto se puede cambiar. El método de pago es opcional. La frecuencia no se muestra: queda la que ya tenía. |
+| `convert-to-recurring` | Oportunidad de donación única + Contact | Crea una donación mensual nueva, vinculada a esa oportunidad. Pide tarjeta o CBU. |
+| `abandoned-cart` | Formulario con datos parciales | Pide monto, frecuencia (mensual, trimestral o anual) y método de pago. El Flow de Salesforce crea el resto. |
+
+**Textos que se cambian en Vercel**, sin editar código (ver también la
+sección [Variables de entorno](#2-variables-de-entorno)):
+
+- `ORG_CONTACT_EMAIL`: correo del pie de los tres formularios.
+- `ORG_NAME`: nombre de la organización en el saludo de **Completá tu donación**.
+
+El resto (títulos, botones, montos, mensaje de éxito) se edita en
+`data/gestion-donacion-config.ts`. `{firstName}` sale del contacto en
+Salesforce.
+
+La guía completa (cómo armar los links, qué verificar en Salesforce,
+pruebas antes de producción y cómo actualizar un fork existente) está
+en [`docs/gestion-donacion.md`](./docs/gestion-donacion.md).
+
+**Opt-in:** Este flow es autocontenido. Las ONGs eligen usarlo o no
+simplemente linkeando (o no) a él desde sus comunicaciones. No afecta
+a los otros flows existentes.
+
 Las credenciales de Salesforce **nunca llegan al navegador**: se quedan
 en el backend de Vercel.
 
@@ -464,3 +547,7 @@ git push origin main
 >
 > Si aparecen conflictos al mergear, Git te marca los archivos en
 > conflicto; resolvelos, hacé `git add <archivo>` y `git commit`.
+
+Para la actualización de los formularios de gestión de donación hay una
+lista de archivos nuevos y modificados, y los pasos después de mergear,
+en [`docs/gestion-donacion.md`](./docs/gestion-donacion.md#5-si-tu-organización-ya-tiene-el-repositorio).
